@@ -1,0 +1,86 @@
+name: yandex-messenger-platform
+label: Yandex Messenger
+kind: platform
+version: 1.0.0
+description: >
+  Yandex Messenger (Яндекс 360 для бизнеса) Bot API gateway adapter for Hermes Agent.
+  Polling (getUpdates) by default, webhook when YANDEX_MESSENGER_WEBHOOK_URL is set.
+  Streaming by message edits, typing/status indicator, media in/out, tappable
+  buttons (approval, clarify, slash-confirm, model/choice pickers), reactions,
+  group chats with mention gating and cron delivery.
+author: Ask.Hermes.YandexMessenger
+requires_env:
+  - name: YANDEX_MESSENGER_BOT_TOKEN
+    description: "OAuth-токен бота (Яндекс 360 для бизнеса → Боты в Мессенджере)"
+    prompt: "OAuth-токен бота"
+    url: "https://admin.yandex.ru/bot-platform"
+    password: true
+optional_env:
+  - name: YANDEX_MESSENGER_ALLOWED_USERS
+    description: "Через запятую логины пользователей, которым разрешено писать боту"
+    prompt: "Allowed users (logins, comma-separated)"
+    password: false
+  - name: YANDEX_MESSENGER_ALLOW_ALL_USERS
+    description: "Разрешить любому пользователю писать боту (только для разработки)"
+    prompt: "Allow all users? (true/false)"
+    password: false
+  - name: YANDEX_MESSENGER_ALLOWED_CHATS
+    description: "Через запятую ID групповых чатов, в которых бот отвечает (пусто = любые)"
+    prompt: "Allowed chat IDs (comma-separated)"
+    password: false
+  - name: YANDEX_MESSENGER_REQUIRE_MENTION
+    description: "В группах отвечать только на @упоминание, reply боту или /команду (default: true)"
+    prompt: "Require @mention in groups? (true/false)"
+    password: false
+  - name: YANDEX_MESSENGER_HOME_CHANNEL
+    description: "Чат по умолчанию для cron/уведомлений: chat_id (0/0/…), login или chat:<id>"
+    prompt: "Home channel"
+    password: false
+  - name: YANDEX_MESSENGER_HOME_CHANNEL_NAME
+    description: "Отображаемое имя home channel"
+    prompt: "Home channel name"
+    password: false
+  - name: YANDEX_MESSENGER_POLL_INTERVAL
+    description: "Пауза между пустыми опросами getUpdates, сек (default: 1.0)"
+    prompt: "Poll interval (seconds)"
+    password: false
+  - name: YANDEX_MESSENGER_WEBHOOK_URL
+    description: "Публичный базовый URL для режима webhook (https://host). Пусто = polling"
+    prompt: "Public webhook base URL"
+    password: false
+  - name: YANDEX_MESSENGER_WEBHOOK_HOST
+    description: "Bind-хост вебхука (default: пусто → dual-stack)"
+    prompt: "Webhook bind host"
+    password: false
+  - name: YANDEX_MESSENGER_WEBHOOK_PORT
+    description: "Порт вебхука (default: 8647)"
+    prompt: "Webhook port"
+    password: false
+  - name: YANDEX_MESSENGER_WEBHOOK_PATH
+    description: "Путь вебхука (default: /yandex-messenger/webhook)"
+    prompt: "Webhook path"
+    password: false
+  - name: YANDEX_MESSENGER_WEBHOOK_SECRET
+    description: "Секрет в пути вебхука (обязателен в режиме webhook)"
+    prompt: "Webhook secret"
+    password: true
+  - name: YANDEX_MESSENGER_MAX_FILE_MB
+    description: "Максимальный размер входящего файла, МБ (default: 50)"
+    prompt: "Max inbound file size (MB)"
+    password: false
+  - name: YANDEX_MESSENGER_REACTIONS
+    description: "Ставить реакции-индикаторы обработки (default: true)"
+    prompt: "Processing reactions? (true/false)"
+    password: false
+  - name: YANDEX_MESSENGER_REACTION_ACK
+    description: "Имя реакции «взял в работу» (из доступных в чате)"
+    prompt: "Ack reaction name"
+    password: false
+  - name: YANDEX_MESSENGER_REACTION_OK
+    description: "Имя реакции «готово»"
+    prompt: "Success reaction name"
+    password: false
+  - name: YANDEX_MESSENGER_REACTION_FAIL
+    description: "Имя реакции «ошибка»"
+    prompt: "Failure reaction name"
+    password: false

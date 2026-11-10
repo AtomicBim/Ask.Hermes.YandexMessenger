@@ -1,0 +1,14 @@
+.git
+.gitignore
+.gitattributes
+.env
+.env.*
+!.env.example
+.pytest_cache
+**/__pycache__
+**/*.pyc
+tests
+docs
+scripts
+README.md
+pytest.ini

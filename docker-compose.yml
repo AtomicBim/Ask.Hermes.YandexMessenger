@@ -1,0 +1,33 @@
+# Hermes Agent + Yandex Messenger bot in one container.
+#
+#   cp .env.example .env        # fill in YANDEX_MESSENGER_BOT_TOKEN, ALLOWED_USERS and an LLM key
+#   docker compose up -d --build
+#   docker compose logs -f hermes     # look for: "yandex_messenger connected ... (polling mode)"
+#
+# Polling needs NO inbound port and works behind NAT. State (config, sessions, memory, skills) lives in the
+# named volume `hermes-data`. Only ONE gateway may poll a bot token: stop any other Hermes / bot using it first.
+services:
+  hermes:
+    build:
+      context: .
+      args:
+        HERMES_IMAGE: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}
+    image: ask-hermes-yandex:latest
+    container_name: hermes-yandex
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Remap the in-container user (match the owner of a bind-mounted data dir, if you use one).
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+    volumes:
+      - hermes-data:/opt/data
+    command: ["gateway", "run"]
+    # Webhook mode only (YANDEX_MESSENGER_WEBHOOK_URL / _SECRET in .env): publish the listener port and put a
+    # TLS reverse proxy in front of it.
+    # ports:
+    #   - "127.0.0.1:8647:8647"
+
+volumes:
+  hermes-data:
