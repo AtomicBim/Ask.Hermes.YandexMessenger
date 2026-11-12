@@ -21,8 +21,17 @@ services:
       # Remap the in-container user (match the owner of a bind-mounted data dir, if you use one).
       - HERMES_UID=${HERMES_UID:-10000}
       - HERMES_GID=${HERMES_GID:-10000}
+      # If HTTPS_PROXY / ALL_PROXY is set in .env (e.g. a VPN proxy for Gemini/Groq), Yandex is a Russian service
+      # and normally must NOT go through it: keep these hosts direct.
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,.yandex.net,.yandex.ru}
     volumes:
       - hermes-data:/opt/data
+      # Seed settings (model, delegation, stt, vision, image_gen, tts) - edit and `docker compose restart hermes`.
+      - ./config:/opt/hermes-seed:ro
+    # Lets the container reach a VPN/proxy client running on the Docker host (HTTPS_PROXY=http://host.docker.internal:PORT).
+    # Docker Desktop defines this name itself; on Linux it needs this mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["gateway", "run"]
     # Webhook mode only (YANDEX_MESSENGER_WEBHOOK_URL / _SECRET in .env): publish the listener port and put a
     # TLS reverse proxy in front of it.

@@ -361,6 +361,129 @@ async def test_standalone_errors(standalone, fake, mod):
     assert "error" in await send(cfg, "0/0/chat", "hi", media_files=[]) or True
 
 
+# ---------------------------------------------------------------- proxy
+PROXY_ENV = ("YANDEX_MESSENGER_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY",
+             "all_proxy", "NO_PROXY", "no_proxy")
+
+
+@pytest.fixture
+def clean_proxy_env(monkeypatch):
+    for name in PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
+
+def test_proxy_resolution_order(mod, clean_proxy_env):
+    from gateway.config import PlatformConfig
+
+    mp = clean_proxy_env
+    cfg = PlatformConfig(token="t", extra={"proxy": "http://from-extra:3128"})
+    assert mod.settings.resolve_proxy(PlatformConfig(token="t")) is None
+    assert mod.settings.resolve_proxy(cfg) == "http://from-extra:3128"
+    mp.setenv("HTTPS_PROXY", "http://generic:8080")
+    assert mod.settings.resolve_proxy(PlatformConfig(token="t")) == "http://generic:8080"  # generic env is a fallback
+    assert mod.settings.resolve_proxy(cfg) == "http://from-extra:3128"                     # extra beats generic env
+    mp.setenv("YANDEX_MESSENGER_PROXY", "socks5h://own:1080")
+    assert mod.settings.resolve_proxy(cfg) == "socks5h://own:1080"                         # dedicated var beats all
+    mp.setenv("NO_PROXY", "botapi.messenger.yandex.net")
+    assert mod.settings.resolve_proxy(cfg) is None                                         # NO_PROXY wins
+
+
+def test_proxy_env_ignored_when_trust_env_disabled(mod, clean_proxy_env, monkeypatch):
+    from gateway.config import PlatformConfig
+    import gateway.platforms.base as base
+
+    clean_proxy_env.setenv("HTTPS_PROXY", "http://generic:8080")
+    monkeypatch.setattr(base, "gateway_trust_env", lambda: False)
+    assert mod.settings.resolve_proxy(PlatformConfig(token="t")) is None
+    clean_proxy_env.setenv("YANDEX_MESSENGER_PROXY", "http://explicit:1")
+    assert mod.settings.resolve_proxy(PlatformConfig(token="t")) == "http://explicit:1"  # explicit var still works
+
+
+def test_redact_proxy(mod):
+    r = mod.settings.redact_proxy
+    assert r("http://user:secret@proxy.corp:3128") == "http://***@proxy.corp:3128"
+    assert r("socks5h://proxy.corp:1080") == "socks5h://proxy.corp:1080"
+    assert "secret" not in r("http://u:secret@h:1") and r("garbage") == "***"
+
+
+async def test_https_api_is_tunnelled_with_connect(mod, clean_proxy_env):
+    """The real API is HTTPS: through an HTTP proxy that means ``CONNECT botapi.messenger.yandex.net:443``."""
+    lines = []
+
+    async def on_conn(reader, writer):
+        lines.append((await reader.readline()).decode().strip())
+        writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(on_conn, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    c = mod.client.YandexMessengerClient("T", proxy=f"http://127.0.0.1:{port}", max_attempts=1, timeout=5)
+    try:
+        with pytest.raises(mod.client.YMApiError):
+            await c.get_self()
+    finally:
+        await c.close()
+        server.close()
+        await server.wait_closed()
+    assert lines == ["CONNECT botapi.messenger.yandex.net:443 HTTP/1.1"]
+
+
+async def test_connect_goes_through_the_proxy_and_logs_it_redacted(
+        mod, fake, make_adapter, clean_proxy_env, caplog, monkeypatch):
+    # plain-HTTP base URL so a simple fake proxy can answer (HTTPS tunnelling is covered above)
+    monkeypatch.setattr(
+        mod.adapter, "YandexMessengerClient",
+        functools.partial(mod.client.YandexMessengerClient, base_url="http://botapi.messenger.yandex.net/bot/v1",
+                          max_attempts=1))
+    seen = []
+
+    async def proxy_handler(request):
+        seen.append((request.headers.get("Host"), request.path))
+        return web.json_response({"ok": True, "id": "bot-guid", "login": "hermes_bot"} if "self/get" in request.path
+                                 else {"ok": True, "updates": []})
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", proxy_handler)
+    async with TestClient(TestServer(app)) as proxy:
+        proxy_url = str(proxy.make_url("/")).replace("http://", "http://svc:topsecret@")
+        clean_proxy_env.setenv("YANDEX_MESSENGER_PROXY", proxy_url)
+        a = make_adapter(connected=False, extra={"poll_interval": 0.2})
+        a._acquire_platform_lock = lambda *args: True
+        a._release_platform_lock = lambda: None
+        with caplog.at_level("INFO"):
+            assert await a.connect() is True  # real default base_url: it only works through the proxy
+        try:
+            assert a._client._proxy == proxy_url
+            assert seen[0] == ("botapi.messenger.yandex.net", "/bot/v1/self/get")
+            assert await wait_for(lambda: any("getUpdates" in p for _, p in seen))
+        finally:
+            await a.disconnect()
+        assert "topsecret" not in caplog.text and "***@" in caplog.text
+
+
+async def test_standalone_uses_the_proxy(mod, clean_proxy_env, monkeypatch):
+    from gateway.config import PlatformConfig
+
+    monkeypatch.setattr(
+        mod.standalone, "YandexMessengerClient",
+        functools.partial(mod.client.YandexMessengerClient, base_url="http://botapi.messenger.yandex.net/bot/v1",
+                          max_attempts=1))
+    seen = []
+
+    async def proxy_handler(request):
+        seen.append((request.headers.get("Host"), request.path))
+        return web.json_response({"ok": True, "message_id": 5})
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", proxy_handler)
+    async with TestClient(TestServer(app)) as proxy:
+        clean_proxy_env.setenv("YANDEX_MESSENGER_PROXY", str(proxy.make_url("/")))
+        res = await mod.standalone.standalone_send(PlatformConfig(token="TOK"), "0/0/chat", "cron says hi")
+    assert res["success"] is True and seen == [("botapi.messenger.yandex.net", "/bot/v1/messages/sendText/")]
+
+
 # ---------------------------------------------------------------- vendored client freshness
 def test_vendored_client_matches_source():
     root = Path(__file__).resolve().parent.parent

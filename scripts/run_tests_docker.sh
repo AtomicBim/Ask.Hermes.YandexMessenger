@@ -12,10 +12,17 @@ IMAGE="${IMAGE:-ask-hermes-yandex:latest}"
 DEPS="${YM_TEST_DEPS:-$HOME/.cache/ym-plugin-test-deps}"
 
 if [[ ! -d "$DEPS/pytest" ]]; then
+  # The image venv is sealed (no pip), so install the pure-Python test deps with the HOST's uv or pip.
   mkdir -p "$DEPS"
-  docker run --rm --user "$(id -u):$(id -g)" -v "$DEPS":/deps --entrypoint /usr/bin/env "$IMAGE" \
-    sh -c 'python3 -m pip install --quiet --target /deps pytest pytest-asyncio 2>&1 | tail -3' || {
-      echo "could not install pytest into $DEPS; install it there manually (pip install --target)" >&2; exit 2; }
+  UV="$(command -v uv || ls -d "$HOME"/.hermes/tools/uv-*/uv 2>/dev/null | head -n1 || true)"
+  if [[ -n "$UV" ]]; then
+    "$UV" pip install --quiet --target "$DEPS" pytest pytest-asyncio
+  elif python3 -m pip --version >/dev/null 2>&1; then
+    python3 -m pip install --quiet --target "$DEPS" pytest pytest-asyncio
+  else
+    echo "need uv or pip on the host to install pytest into $DEPS (or set YM_TEST_DEPS to a dir that has it)" >&2
+    exit 2
+  fi
 fi
 
 exec docker run --rm --entrypoint /opt/hermes/.venv/bin/python \

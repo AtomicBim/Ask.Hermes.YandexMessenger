@@ -27,7 +27,6 @@ from gateway.platforms.base import (
     SendResult,
     cache_image_from_url,
     cache_media_bytes_async,
-    gateway_trust_env,
 )
 from gateway.platforms.event import MessageEvent, MessageType
 from gateway.platforms.helpers import MessageDeduplicator
@@ -48,7 +47,7 @@ from ._vendor.yandex_messenger_client import (
 )
 from . import gateway_env
 from .interactive import InteractiveMixin
-from .settings import Settings, load_settings
+from .settings import Settings, load_settings, redact_proxy, resolve_proxy
 from .standalone import standalone_send
 from .transport import OffsetStore, PollingLoop, WebhookServer
 
@@ -222,7 +221,12 @@ class YandexMessengerAdapter(InteractiveMixin, BasePlatformAdapter):
                 "webhook calls; the secret in the URL is the only authentication)",
             )
         await self._close_client()
-        self._client = YandexMessengerClient(self.token, trust_env=gateway_trust_env())
+        # The proxy is resolved once, explicitly (YANDEX_MESSENGER_PROXY > HTTPS_PROXY/ALL_PROXY, NO_PROXY honoured),
+        # so the client itself never reads the environment (trust_env stays False).
+        proxy = resolve_proxy(self.config)
+        if proxy:
+            logger.info("[%s] using outbound proxy %s", self.name, redact_proxy(proxy))
+        self._client = YandexMessengerClient(self.token, proxy=proxy)
         try:
             me = await self._client.get_self()
         except YMApiError as exc:

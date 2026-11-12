@@ -15,7 +15,7 @@ from ._vendor.yandex_messenger_client import (
     split_text,
     to_yandex_markdown,
 )
-from .settings import resolve_token
+from .settings import resolve_proxy, resolve_token
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ async def standalone_send(
         return send_error(f"Yandex Messenger standalone send: {exc}")
     thread = int(thread_id) if str(thread_id or "").isdigit() else None
     last_id = None
-    client = YandexMessengerClient(token)
+    client = YandexMessengerClient(token, proxy=resolve_proxy(pconfig))
     try:
         for chunk in split_text(to_yandex_markdown(message or "")):
             result = await client.send_text(target, chunk, thread_id=thread)

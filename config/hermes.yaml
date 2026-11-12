@@ -1,0 +1,34 @@
+# Hermes settings applied to $HERMES_HOME/config.yaml by the container (docker/cont-init-yandex-messenger.sh).
+#
+# Semantics: every leaf listed here is written with `hermes config set` on the first start and again whenever
+# this file (or hermes.local.yaml) changes; keys that are not listed are never touched. Edit the file and run
+# `docker compose restart hermes` - no rebuild needed (the directory is mounted read-only).
+#
+# Private values (names, internal vocabulary) go to config/hermes.local.yaml: it is git-ignored and merged on top.
+# API keys never belong here: they go to .env (OPENROUTER_API_KEY, GROQ_API_KEY, GEMINI_API_KEY).
+
+model:
+  default: "~deepseek/deepseek-pro-latest"
+  provider: "openrouter"
+
+delegation:          # model for sub-agents
+  model: deepseek/deepseek-v4.1-flash-1017
+  provider: openrouter
+
+stt:                 # voice recognition (needs GROQ_API_KEY)
+  enabled: true
+  provider: groq
+
+auxiliary:
+  vision:            # vision through OpenRouter (direct Gemini is geo-blocked)
+    provider: openrouter
+    model: "google/gemini-4-argon"
+
+image_gen:           # image generation
+  provider: openrouter
+  model: "google/gemini-3-pro-image-preview"
+
+tts:                 # voice output (needs GEMINI_API_KEY; direct Gemini may require a proxy, see README)
+  provider: gemini
+  gemini:
+    model: gemini-3.1-flash-tts-preview

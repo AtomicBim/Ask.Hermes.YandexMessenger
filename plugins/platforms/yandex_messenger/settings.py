@@ -85,6 +85,33 @@ def resolve_token(config: Any = None) -> str:
     return str(token).strip()
 
 
+API_HOST = "botapi.messenger.yandex.net"
+CDN_HOST = "storage.mds.yandex.net"  # file downloads may be redirected here
+
+
+def resolve_proxy(config: Any = None) -> Optional[str]:
+    """Outbound proxy for every Yandex call (API, file download, CDN, cron delivery).
+
+    Order (Hermes' standard ``resolve_proxy_url``): ``YANDEX_MESSENGER_PROXY`` (env / ``extra.proxy``), then
+    ``HTTPS_PROXY`` / ``HTTP_PROXY`` / ``ALL_PROXY`` when ``gateway.trust_env`` is true; ``NO_PROXY``
+    matching the API host disables it. Accepts ``http(s)://[user:pass@]host:port`` and ``socks5(h)://``.
+    """
+    from gateway.platforms.base import resolve_proxy_url
+
+    extra = getattr(config, "extra", None) or {}
+    configured = extra.get("proxy") or extra.get("proxy_url")
+    return resolve_proxy_url("YANDEX_MESSENGER_PROXY", target_hosts=[API_HOST, CDN_HOST], configured=configured)
+
+
+def redact_proxy(url: str) -> str:
+    """``scheme://***@host:port`` - proxy URLs may embed credentials and must never reach the logs."""
+    text = str(url or "")
+    scheme, sep, rest = text.partition("://")
+    if not sep:
+        return "***"
+    return f"{scheme}://" + (f"***@{rest.rsplit('@', 1)[1]}" if "@" in rest else rest)
+
+
 def normalize_path(path: Any) -> str:
     text = str(path or "").strip() or DEFAULT_WEBHOOK_PATH
     return "/" + text.strip("/")

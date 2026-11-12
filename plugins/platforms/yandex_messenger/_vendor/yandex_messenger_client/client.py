@@ -60,7 +60,12 @@ class YandexMessengerClient:
         max_attempts: int = 2,
         backoff_base: float = 0.5,
         trust_env: bool = False,
+        proxy: Optional[str] = None,
     ) -> None:
+        """``proxy``: ``http://[user:pass@]host:port``, ``https://...`` or ``socks5://`` / ``socks5h://``
+        (SOCKS needs the optional ``aiohttp_socks`` package; remote DNS is always used). It takes
+        precedence over ``trust_env`` (which only reads ``HTTP(S)_PROXY`` / ``ALL_PROXY`` from the env).
+        An injected ``session`` is used as is: configure its proxy yourself."""
         self._token = token or ""
         self.base_url = base_url.rstrip("/")
         self._session = session
@@ -69,10 +74,37 @@ class YandexMessengerClient:
         self._max_attempts = max(1, int(max_attempts))
         self._backoff_base = backoff_base
         self._trust_env = trust_env
+        self._proxy = (proxy or "").strip() or None
 
     # ------------------------------------------------------------------ lifecycle
-    def __repr__(self) -> str:  # never leak the token
-        return f"YandexMessengerClient(base_url={self.base_url!r}, token={_mask(self._token)!r})"
+    def __repr__(self) -> str:  # never leak the token or proxy credentials
+        proxy = "set" if self._proxy else None
+        return (
+            f"YandexMessengerClient(base_url={self.base_url!r}, token={_mask(self._token)!r}, proxy={proxy!r})"
+        )
+
+    @property
+    def _is_socks(self) -> bool:
+        return bool(self._proxy) and self._proxy.lower().startswith("socks")
+
+    def _proxy_kwargs(self) -> dict:
+        """Per-request kwargs: an HTTP(S) proxy is passed per request, SOCKS goes through the connector."""
+        if self._proxy and not self._is_socks and self._owns_session:
+            return {"proxy": self._proxy}
+        return {}
+
+    def _build_connector(self) -> Any:
+        if not self._is_socks:
+            return None
+        try:
+            from aiohttp_socks import ProxyConnector
+        except ImportError as exc:
+            raise YMTransportError(
+                "a SOCKS proxy is configured but the 'aiohttp_socks' package is not installed "
+                "(pip install aiohttp-socks) - or use an HTTP proxy",
+                method="proxy", kind="transient",
+            ) from exc
+        return ProxyConnector.from_url(self._proxy, rdns=True)
 
     async def __aenter__(self) -> "YandexMessengerClient":
         await self._ensure_session()
@@ -83,8 +115,10 @@ class YandexMessengerClient:
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
+            connector = self._build_connector()
+            extra = {"connector": connector} if connector is not None else {}
             self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self._timeout), trust_env=self._trust_env
+                timeout=aiohttp.ClientTimeout(total=self._timeout), trust_env=self._trust_env, **extra
             )
             self._owns_session = True
         return self._session
@@ -133,7 +167,7 @@ class YandexMessengerClient:
         client_timeout = aiohttp.ClientTimeout(total=timeout) if timeout else None
         last_exc: Optional[YMApiError] = None
         for attempt in range(1, self._max_attempts + 1):
-            kwargs: dict = {"headers": self._auth}
+            kwargs: dict = {"headers": self._auth, **self._proxy_kwargs()}
             if json is not None:
                 kwargs["json"] = json
             if params:
@@ -459,7 +493,9 @@ class YandexMessengerClient:
         url = self._url("messages/getFile/")
         timeout = aiohttp.ClientTimeout(total=3600, sock_read=600, connect=60)
         try:
-            async with session.post(url, headers=headers, json={"file_id": file_id}, timeout=timeout) as resp:
+            async with session.post(
+                url, headers=headers, json={"file_id": file_id}, timeout=timeout, **self._proxy_kwargs()
+            ) as resp:
                 if resp.status >= 400:
                     data = self._decode(await resp.read())
                     raise error_for(resp.status, str(data.get("description") or f"HTTP {resp.status}"), method="getFile", retry_after=self._retry_after(resp))
@@ -471,7 +507,7 @@ class YandexMessengerClient:
                     if not cdn:
                         raise error_for(404, "getFile returned no file content", method="getFile")
                     cdn_url = cdn if str(cdn).startswith("http") else CDN_FALLBACK_BASE + str(cdn).lstrip("/")
-                    async with session.get(cdn_url, timeout=timeout) as cdn_resp:
+                    async with session.get(cdn_url, timeout=timeout, **self._proxy_kwargs()) as cdn_resp:
                         if cdn_resp.status >= 400:
                             raise error_for(cdn_resp.status, f"CDN HTTP {cdn_resp.status}", method="getFile(cdn)")
                         yield cdn_resp

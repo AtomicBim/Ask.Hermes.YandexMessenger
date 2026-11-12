@@ -6,4 +6,5 @@ __pycache__/
 .env
 *.log
 .kilo/
+config/hermes.local.yaml
 docs/probe-output.json

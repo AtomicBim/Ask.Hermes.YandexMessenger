@@ -1,0 +1,3 @@
+# Copy to hermes.local.yaml (git-ignored) for values that must not be committed.
+stt:
+  prompt: "Names and vocabulary the speech recognizer should know, comma separated."

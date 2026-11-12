@@ -19,8 +19,17 @@
 
 ## Требования
 
-* Hermes Agent с plugin-платформами (проверено на commit `b200f5bc`, Python 3.14 venv Hermes). Дополнительных pip-зависимостей нет: `aiohttp` уже в Hermes.
+* Hermes Agent с plugin-платформами. Тесты проходят на двух версиях: хостовая установка (commit `b200f5bc`) и образ `nousresearch/hermes-agent:latest` (commit `3b421578`); обе на Python 3.14. Дополнительных pip-зависимостей нет: `aiohttp` уже в Hermes.
 * Бот в Яндекс 360 (`admin.yandex.ru/bot-platform`) и его OAuth-токен.
+* Логин пользователя в `YANDEX_MESSENGER_ALLOWED_USERS` — это его рабочая почта в Яндекс 360 (`name@company.ru`), регистр не важен.
+
+## Статус проверки
+
+| Проверено вживую (реальный бот, личный чат) | Покрыто только тестами |
+|---|---|
+| polling, диалог и стриминг, реакции, `/model` (кнопки), картинка и файл туда-обратно, карточка подтверждения команды, `processing`-typing | `clarify`, slash-confirm, запрос обновления, группы и упоминания, webhook, cron/`standalone_send`, галереи |
+
+Поведение Bot API, подтверждённое экспериментально, — в `docs/API_FINDINGS.md`.
 
 ## Установка
 
@@ -52,14 +61,19 @@ docker compose logs -f hermes   # ждём: "yandex_messenger connected ... (pol
 ```
 
 * **Входящие порты не нужны**: polling работает за NAT. Для webhook раскомментируйте `ports:` в `docker-compose.yml` и задайте `YANDEX_MESSENGER_WEBHOOK_URL` / `_SECRET`.
-* **Модель.** Либо в `.env` (`HERMES_PROVIDER`, `HERMES_MODEL` — применяются на каждом старте), либо один раз вручную: `docker compose exec hermes hermes model`. Ключ провайдера (`OPENROUTER_API_KEY` и т.п.) — в `.env`.
+* **Основная модель.** По умолчанию — из `config/hermes.yaml` (см. ниже). Можно сменить вручную: `docker compose exec hermes hermes model`. Переменные `HERMES_PROVIDER` / `HERMES_MODEL` в `.env` — жёсткое переопределение на **каждом** старте (перекрывают и сид, и ручной выбор).
+* **Минимум для старта:** `YANDEX_MESSENGER_BOT_TOKEN`, `YANDEX_MESSENGER_ALLOWED_USERS` и `OPENROUTER_API_KEY` (для голоса и озвучки ещё `GROQ_API_KEY`, `GEMINI_API_KEY`). Без `ALLOWED_USERS` (и без `ALLOW_ALL_USERS`) боту никто не сможет писать.
 * **Один токен — один gateway.** Остановите всё, что уже опрашивает этого бота (старый RAG-бот, Hermes на хосте: `hermes gateway stop`), иначе процессы будут отнимать апдейты друг у друга.
+* **Настройки Hermes (модели и пр.)** лежат в `config/hermes.yaml` и применяются при старте контейнера через `hermes config set`: основная модель и провайдер, `delegation` (субагенты), `stt` (Groq), `auxiliary.vision`, `image_gen`, `tts` (Gemini). Применяются при первом старте и **при каждом изменении файлов**; ключи, которых в файле нет, не трогаются, ручные правки (`hermes model`) переживают перезапуск, пока сид не менялся. Правка: изменить файл и `docker compose restart hermes` (каталог `config/` смонтирован, пересборка не нужна). `HERMES_CONFIG_RESEED=1` — принудительно применить заново.
+* **Приватные значения** (например `stt.prompt` с именами сотрудников) — в `config/hermes.local.yaml`: он в `.gitignore`, не попадает в образ и накладывается поверх `hermes.yaml` (образец — `hermes.local.yaml.example`). На новую машину его нужно перенести отдельно (репозиторий публичный).
+* **Ключи для этих моделей** — в `.env`: `OPENROUTER_API_KEY` (чат, субагенты, vision, image_gen), `GROQ_API_KEY` (STT), `GEMINI_API_KEY` (TTS).
+* **Прокси / VPN.** Инструменты Hermes (LLM, Groq, Gemini) учитывают `HTTP(S)_PROXY` / `ALL_PROXY` / `NO_PROXY` из `.env`. Для VPN-клиента на хосте: `HTTPS_PROXY=http://host.docker.internal:<порт>` (mapping `host.docker.internal` уже в `docker-compose.yml`; клиент должен слушать не только `127.0.0.1`). По умолчанию `NO_PROXY=localhost,127.0.0.1,.yandex.net,.yandex.ru`, поэтому **бот Яндекса ходит напрямую**, мимо VPN. Свой `NO_PROXY` из `.env` заменяет умолчание — оставьте в нём домены Яндекса. Отдельный прокси только для бота: `YANDEX_MESSENGER_PROXY` (приоритетнее `HTTPS_PROXY` и `NO_PROXY`); форматы `http(s)://[user:pass@]host:port` и `socks5(h)://`. Прокси касается API, скачивания файлов, CDN и cron-доставки; в логе адрес печатается без учётных данных.
 * **Версия Hermes.** По умолчанию `nousresearch/hermes-agent:latest`. Для воспроизводимости закрепите тег: `HERMES_IMAGE=nousresearch/hermes-agent:<tag>` в `.env` (или `--build-arg`). Совместимость плагина с образом проверяется `bash scripts/run_tests_docker.sh`.
 * **Обновление.** `docker compose build --pull && docker compose up -d` — плагин переустанавливается из образа; данные в томе сохраняются. Правки плагина внутри тома перезаписываются.
 * **Команды Hermes внутри контейнера:** `docker compose exec hermes hermes config show`, `... hermes plugins list`, `... hermes gateway status`.
 * **Резервная копия тома:** `docker run --rm -v hermes-data:/data -v "$PWD":/backup alpine tar czf /backup/hermes-data.tgz -C /data .`
 
-Проверено: сборка, установка и включение плагина, выставление модели, подключение адаптера (на фиктивном токене получен корректный `Invalid token`), 99 тестов плагина на Hermes из образа. Живой диалог из контейнера с реальным токеном не прогонялся — для него нужно остановить gateway на хосте.
+Проверено: сборка, установка и включение плагина, выставление модели, подключение адаптера (на фиктивном токене получен корректный `Invalid token`), 99 тестов плагина на Hermes из образа (1 пропуск — проверка vendored-клиента, рядом нет `yandex_bot_example`). Живой диалог из контейнера с реальным токеном не прогонялся — для него нужно остановить gateway на хосте.
 
 ## Настройка (env или `platforms.yandex_messenger.extra` в `config.yaml`; env приоритетнее)
 
@@ -70,7 +84,8 @@ docker compose logs -f hermes   # ждём: "yandex_messenger connected ... (pol
 | `YANDEX_MESSENGER_ALLOW_ALL_USERS` | `false` | Разрешить всем (только для разработки) |
 | `YANDEX_MESSENGER_ALLOWED_CHATS` | пусто = любые | ID групповых чатов, где бот отвечает |
 | `YANDEX_MESSENGER_REQUIRE_MENTION` | `true` | В группах отвечать только на упоминание / reply / `/команду` |
-| `YANDEX_MESSENGER_HOME_CHANNEL` | — | Чат для cron: `0/0/<uuid>`, логин или `chat:<id>` / `login:<x>` / `user:<guid>` |
+| `YANDEX_MESSENGER_HOME_CHANNEL` | — | Чат для cron: `0/0/<uuid>`, `<guid>_<guid>` (личный чат), логин или `chat:<id>` / `login:<x>` / `user:<guid>` |
+| `YANDEX_MESSENGER_HOME_CHANNEL_NAME` | `Home` | Отображаемое имя home channel |
 | `YANDEX_MESSENGER_POLL_INTERVAL` | `1.0` | Пауза между пустыми опросами, сек (мин. 0.2) |
 | `YANDEX_MESSENGER_WEBHOOK_URL` | пусто = polling | Публичный **базовый** URL (`https://host`) |
 | `YANDEX_MESSENGER_WEBHOOK_SECRET` | — | Секрет в пути (`{path}/{secret}`); **обязателен** в режиме webhook |
@@ -98,11 +113,13 @@ Bot API не подписывает вызовы вебхука, поэтому 
 
 ```bash
 # библиотека (Windows, из ../yandex_bot_example): python -m pytest
-# плагин (WSL, на реальном коде Hermes):
+# плагин на Hermes, установленном в WSL/Linux:
 wsl -d Ubuntu-24.04 -- bash scripts/run_tests_wsl.sh -q
+# плагин на Hermes из собранного Docker-образа (после `docker compose build`):
+bash scripts/run_tests_docker.sh
 ```
 
-* Тесты плагина используют реальные `gateway.*` из установленного Hermes и поддельный Bot API на `aiohttp`; `HERMES_HOME` — временный каталог, `~/.hermes` не затрагивается. pytest ставится в `~/.cache/ym-plugin-test-deps`, а не в venv Hermes.
+* Тесты плагина используют реальные `gateway.*` из Hermes и поддельный Bot API на `aiohttp`; `HERMES_HOME` — временный каталог, `~/.hermes` не затрагивается. pytest ставится в `~/.cache/ym-plugin-test-deps` (нужен `uv` или `pip` на хосте), а не в venv Hermes. Без Hermes (например, на чистой Windows) тесты пропускаются.
 * `tests/test_discovery.py` загружает плагин настоящим `PluginManager` из пользовательского каталога.
 * Клиент `yandex_messenger_client` — общий с `../yandex_bot_example`; копия лежит в `plugins/platforms/yandex_messenger/_vendor/`. Обновление: `python scripts/sync_client.py` (проверка актуальности: `--check`, она же в тестах).
 * `scripts/probe_api.py` — эмпирическая проверка поведения Bot API на реальном токене (см. `docs/API_FINDINGS.md`).
@@ -117,7 +134,10 @@ plugins/platforms/yandex_messenger/
   standalone.py                               # доставка для cron
   settings.py  gateway_env.py  adapter_hint.py
   _vendor/yandex_messenger_client/            # vendored HTTP-клиент (не править, см. sync_client.py)
-scripts/   sync_client.py  install_wsl.sh  run_tests_wsl.sh  probe_api.py
-tests/     inbound / outbound / interactive / transport / registration / discovery
+Dockerfile  docker-compose.yml  .env.example  .dockerignore
+config/    hermes.yaml  hermes.local.yaml(.example)    # настройки Hermes: сид для контейнера (local — приватный, в .gitignore)
+docker/    cont-init-yandex-messenger.sh  apply_config.py   # s6-шаг: плагин + применение сида через `hermes config set`
+scripts/   sync_client.py  install_wsl.sh  run_tests_wsl.sh  run_tests_docker.sh  probe_api.py
+tests/     test_inbound / test_outbound / test_interactive / test_transport / test_registration / test_discovery  (+ conftest, fake_yandex)
 docs/      API_FINDINGS.md
 ```
