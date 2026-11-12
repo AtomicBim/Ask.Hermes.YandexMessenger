@@ -1,13 +1,16 @@
 # Hermes Agent + Yandex Messenger platform plugin.
 #
-#   docker compose build            # uses the official image as the base
-#   docker compose build --build-arg HERMES_IMAGE=nousresearch/hermes-agent:<tag>   # pin a tested version
+#   docker compose build            # uses the pinned official image as the base
+#   HERMES_IMAGE=nousresearch/hermes-agent:<tag> docker compose build   # try another version (or set it in .env)
+#
+# The default tag is the Hermes release this plugin was last tested against (see README, "Версия Hermes").
+# Do not point it at `latest`: Hermes is updated often and the plugin uses its internal APIs.
 #
 # The base image is immutable and keeps all state in the /opt/data volume, so the plugin is baked into a
 # read-only seed directory and installed into $HERMES_HOME on every container start (see
 # docker/cont-init-yandex-messenger.sh). Rebuilding the image therefore upgrades the plugin without
 # touching the data volume.
-ARG HERMES_IMAGE=nousresearch/hermes-agent:latest
+ARG HERMES_IMAGE=nousresearch/hermes-agent:v0.23.1
 FROM ${HERMES_IMAGE}
 
 USER root

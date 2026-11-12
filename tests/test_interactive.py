@@ -416,6 +416,112 @@ async def test_model_picker_expired_and_unauthorized(auth_alice, fake, no_model_
     assert "selected_provider" not in a._model_picker_state[CHAT]
 
 
+# ---------------------------------------------------------------- admin-only settings (slash gating)
+def _gate(adapter, admins=("alice",), commands=("new",)):
+    adapter.config.extra.update(
+        allow_admin_from=list(admins), group_allow_admin_from=list(admins),
+        user_allowed_commands=list(commands), group_user_allowed_commands=list(commands))
+
+
+async def test_model_picker_taps_need_admin_when_gating_is_on(auth_alice, fake, no_model_warning):
+    a = auth_alice()
+    a._authorization_check = lambda user, chat_type=None, chat_id=None, **k: user in ("alice", "bob")
+    _gate(a, admins=("alice",))
+    picked = []
+
+    async def on_model(chat_id, model_id, slug):
+        picked.append(model_id)
+        return "ok"
+
+    await a.send_model_picker(CHAT, PROVIDERS, "a/one", "alpha", "sess", on_model)
+    n = len(edits(fake))
+    await a._handle_bot_request(tap_update("mp:alpha", login="bob"))       # allowed user, not an admin
+    assert len(edits(fake)) == n and "selected_provider" not in a._model_picker_state[CHAT]
+    notice = fake.last("messages/sendText")["json"]
+    assert notice["login"] == "bob" and "administrator" in notice["text"]
+    await a._handle_bot_request(tap_update("mp:alpha", login="alice", update_id=9001))  # the admin
+    assert a._model_picker_state[CHAT]["selected_provider"] == "alpha"
+    await a._handle_bot_request(tap_update("mm:0", login="bob", update_id=9002))        # still no switch for bob
+    assert picked == []
+    await a._handle_bot_request(tap_update("mm:0", login="alice", update_id=9003))
+    assert picked == ["a/one"]
+
+
+async def test_choice_picker_taps_need_admin_when_gating_is_on(auth_alice, fake):
+    a = auth_alice()
+    a._authorization_check = lambda user, chat_type=None, chat_id=None, **k: user in ("alice", "bob")
+    _gate(a, admins=("alice",))
+    chosen = []
+
+    async def on_choice(chat_id, value):
+        chosen.append(value)
+        return "done"
+
+    await a.send_choice_picker(CHAT, "Reasoning", [{"value": "high", "label": "High"}], "sess", on_choice)
+    await a._handle_bot_request(tap_update("cp:0", login="bob"))
+    assert chosen == [] and CHAT in a._choice_picker_state
+    await a._handle_bot_request(tap_update("cp:0", login="alice", update_id=9001))
+    assert chosen == ["high"]
+
+
+async def test_group_picker_uses_the_group_admin_list(auth_alice, fake, no_model_warning):
+    a = auth_alice()
+    a._authorization_check = lambda user, chat_type=None, chat_id=None, **k: True
+    a.config.extra.update(allow_admin_from=["alice"], group_allow_admin_from=["carol"])  # DM admin != group admin
+    group = "0/0/grp"
+
+    async def on_model(*args):  # pragma: no cover
+        return "x"
+
+    await a.send_model_picker(group, PROVIDERS, "a/one", "alpha", "sess", on_model)
+    await a._handle_bot_request(tap_update("mp:alpha", login="alice", chat_id=group, chat_type="group"))
+    assert "selected_provider" not in a._model_picker_state[group]
+    await a._handle_bot_request(tap_update("mp:alpha", login="carol", chat_id=group, chat_type="group", update_id=9001))
+    assert a._model_picker_state[group]["selected_provider"] == "alpha"
+
+
+async def test_pickers_stay_open_to_everyone_without_gating(auth_alice, fake, no_model_warning):
+    a = auth_alice()  # no admin list configured -> Hermes' default: nothing is restricted
+    a._authorization_check = lambda user, chat_type=None, chat_id=None, **k: True
+
+    async def on_model(*args):  # pragma: no cover
+        return "x"
+
+    await a.send_model_picker(CHAT, PROVIDERS, "a/one", "alpha", "sess", on_model)
+    await a._handle_bot_request(tap_update("mp:alpha", login="bob"))
+    assert a._model_picker_state[CHAT]["selected_provider"] == "alpha"
+
+
+async def test_hermes_runner_refuses_model_for_non_admin(mod, monkeypatch):
+    """The real ``GatewayBusySessionMixin._check_slash_access`` with the env-derived config."""
+    from types import SimpleNamespace
+
+    from gateway.config import GatewayConfig
+    from gateway.run_busy import GatewayBusySessionMixin
+    from gateway.session import SessionSource
+
+    monkeypatch.setenv("YANDEX_MESSENGER_BOT_TOKEN", "t")
+    monkeypatch.setenv("YANDEX_MESSENGER_ADMIN_USERS", "boss@corp.ru")
+    config = GatewayConfig()
+    for step in mod.gateway_env.ENV_OVERRIDES:
+        (step.apply if hasattr(step, "apply") else step)(config)
+    runner = SimpleNamespace(config=config)
+    platform = mod.gateway_env.platform()
+
+    def source(user, chat_type="dm"):
+        return SessionSource(platform=platform, chat_id="c", chat_type=chat_type, user_id=user)
+
+    check = lambda src, cmd: GatewayBusySessionMixin._check_slash_access(runner, src, cmd)  # noqa: E731
+    assert check(source("boss@corp.ru"), "model") is None
+    assert check(source("boss@corp.ru", "group"), "yolo") is None
+    for cmd in ("model", "config", "yolo", "reasoning", "update"):
+        denied = check(source("alice@corp.ru"), cmd)
+        assert denied and cmd in denied, cmd
+        assert check(source("alice@corp.ru", "group"), cmd)
+    for cmd in ("new", "stop", "help", "whoami", "status"):
+        assert check(source("alice@corp.ru"), cmd) is None, cmd
+
+
 # ---------------------------------------------------------------- dispatcher / auth
 async def test_foreign_and_malformed_taps_are_ignored(auth_alice, fake, caplog):
     a = auth_alice()

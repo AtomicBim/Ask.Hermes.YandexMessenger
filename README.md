@@ -5,6 +5,7 @@
 
 * [Быстрый старт на Ubuntu (Docker)](#быстрый-старт-на-ubuntu-docker)
 * [Docker: настройка и эксплуатация](#docker-настройка-и-эксплуатация)
+* [Обновление плагина и Hermes (для администратора)](#обновление-плагина-и-hermes-для-администратора)
 * [Установка без Docker](#установка-без-docker)
 * [Возможности](#возможности) · [Переменные](#переменные-плагина) · [Разработка](#разработка-и-тесты)
 
@@ -52,9 +53,11 @@ docker compose logs -f hermes
 |---|---|
 | `YANDEX_MESSENGER_BOT_TOKEN` | OAuth-токен бота Яндекс (**обязательно**) |
 | `YANDEX_MESSENGER_ALLOWED_USERS` | рабочая почта пользователя; несколько — через запятую (**обязательно**: иначе боту никто не сможет писать) |
+| `YANDEX_MESSENGER_ADMIN_USERS` | почта администратора (несколько — через запятую). **Только он может менять модель и настройки**; без этой переменной ограничений нет и модель может сменить любой пользователь — см. [Администраторы и пользователи](#администраторы-и-пользователи) |
 | `OPENROUTER_API_KEY` | ключ OpenRouter: основная модель, субагенты, зрение, генерация картинок (**обязательно**) |
 | `GROQ_API_KEY` | распознавание голоса (нужен, если включён `stt`) |
 | `GEMINI_API_KEY` | озвучка ответов (нужен, если включён `tts`) |
+| `HERMES_IMAGE` | версия Hermes; **уже закреплена** в `.env.example`, не меняйте без необходимости — см. [Обновление](#обновление-плагина-и-hermes-для-администратора) |
 | `HTTPS_PROXY`, `NO_PROXY` | если выход в интернет идёт через VPN/прокси — см. [Прокси](#прокси--vpn) |
 
 Модели и остальные настройки Hermes уже заданы в `config/hermes.yaml` (+ `config/hermes.local.yaml`) и применяются сами.
@@ -104,16 +107,10 @@ docker compose restart hermes            # перезапуск (наприме�
 docker compose stop                      # остановить (данные сохраняются)
 docker compose up -d                     # запустить снова / применить изменения .env
 docker compose exec hermes hermes config show      # настройки Hermes внутри контейнера
-docker compose exec hermes hermes model            # сменить модель вручную
+docker compose exec hermes hermes model            # сменить модель вручную (администратор, на сервере)
 ```
 
-**Обновление** (новая версия плагина и/или образа Hermes; данные в томе сохраняются):
-
-```bash
-git pull
-docker compose build --pull
-docker compose up -d
-```
+Обновление плагина и Hermes — в отдельном разделе [Обновление](#обновление-плагина-и-hermes-для-администратора).
 
 **Резервная копия тома** и **полное удаление**:
 
@@ -124,6 +121,37 @@ docker compose down -v         # удалить и данные (сессии, �
 ```
 
 (Копия содержит `.env`-подобные данные Hermes — `auth.json`, `.env`, сессии: храните её как секрет.)
+
+### Администраторы и пользователи
+
+Задайте `YANDEX_MESSENGER_ADMIN_USERS=admin@company.ru` в `.env` — включается разграничение команд Hermes
+(`gateway/slash_access.py`), одно и то же в личных чатах и группах:
+
+| | Администратор | Обычный пользователь (из `ALLOWED_USERS`) |
+|---|---|---|
+| Обычный диалог, файлы, голос, картинки | да | да |
+| `/model`, `/config`, `/reasoning`, `/fast`, `/personality`, `/tools`, `/skills`, `/yolo`, `/approvals`, `/plugins`, `/reload*`, `/restart`, `/update`, `/sethome`, `/cron`, `/login` и все остальные команды | да | **нет** |
+| `/help`, `/whoami` | да | да |
+| `/new`, `/stop`, `/status`, `/retry`, `/undo`, `/history`, `/title`, `/resume`, `/sessions`, `/queue`, `/usage`, `/approve`, `/deny`, `/version` | да | да (список меняется переменной `YANDEX_MESSENGER_USER_COMMANDS`) |
+| Кнопки выбора модели и значений (`/model`, `/reasoning`) | да | нет |
+| Кнопки подтверждения опасной команды | да | да, если пользователь авторизован в боте |
+
+Пользователь, набравший `/model`, получает отказ от Hermes. Логин администратора пишется так же, как в Яндекс 360;
+регистр сравнивается точно.
+
+Администратор меняет модель: через `/model` в чате, либо правкой `config/hermes.yaml` и `docker compose restart hermes`,
+либо `docker compose exec hermes hermes model` на сервере. Без `ADMIN_USERS` ограничений нет, и при старте в
+`docker compose logs` будет предупреждение `slash-command gating OFF`. Что разграничение включено, видно в файле журнала
+(в консоль контейнера строка не попадает):
+
+```bash
+docker compose exec hermes grep "slash-command gating" /opt/data/logs/gateway.log
+# ... slash-command gating ON: 1 admin(s); other users may run /help /whoami and /approve, /deny, ...
+```
+
+> Запрет касается команд и кнопок. Это не изоляция: обычный пользователь по-прежнему просит агента выполнять задачи
+> с правами контейнера. Опасные команды требуют подтверждения, но при `approvals.mode: smart` (режим Hermes по умолчанию
+> в некоторых установках) часть из них подтверждается автоматически; `manual` просит подтверждение для каждой.
 
 ### Настройки Hermes (модели и пр.)
 
@@ -153,11 +181,74 @@ docker compose down -v         # удалить и данные (сессии, �
 
 * **Webhook вместо polling.** Нужен публичный HTTPS-адрес: раскомментируйте `ports:` в `docker-compose.yml`, задайте
   `YANDEX_MESSENGER_WEBHOOK_URL` и `YANDEX_MESSENGER_WEBHOOK_SECRET` (см. [Webhook](#webhook)).
-* **Версия Hermes.** По умолчанию `nousresearch/hermes-agent:latest`. Для воспроизводимости закрепите тег:
-  `HERMES_IMAGE=nousresearch/hermes-agent:<tag>` в `.env`. Совместимость плагина с образом проверяет `bash scripts/run_tests_docker.sh`.
 * **Несколько пользователей.** Один контейнер = один бот; у каждого пользователя из `ALLOWED_USERS` своя сессия, но память,
   skills, настройки и ключи общие. Для изоляции нужен отдельный бот (токен), отдельный `.env` и отдельный том на каждого
   (`docker compose -p <имя> ...`; для этого уберите `container_name` из `docker-compose.yml`).
+
+## Обновление плагина и Hermes (для администратора)
+
+### Версия Hermes закреплена
+
+Плагин опирается на внутренние механизмы Hermes (подтверждение команд, кнопки, медиа-кэш), а Hermes выпускает версии
+часто (`v0.23.0` — 5 ноября, `v0.23.1` — 10 ноября). Поэтому образ закреплён на проверенной версии:
+
+* в `.env.example` — `HERMES_IMAGE=nousresearch/hermes-agent:v0.23.1` (копируется в ваш `.env`);
+* те же значения по умолчанию в `docker-compose.yml` и `Dockerfile`, так что сборка без `.env` тоже не уйдёт на новую версию.
+
+Пересборка и `docker compose build --pull` **не** переходят на новый Hermes сами: тег конкретного релиза (`v0.23.1`) указывает
+на один образ (теги `latest` и `stable` двигаются на каждый новый релиз — не используйте их). Новая версия появляется у вас
+только когда вы сами меняете тег. Если нужна абсолютная строгость, закрепите образ по digest:
+`HERMES_IMAGE=nousresearch/hermes-agent@sha256:<digest>` (digest виден в `docker images --digests`).
+
+Проверено: плагин проходит тесты на `v0.23.0` и `v0.23.1`.
+
+### Обновить только плагин (`git pull`)
+
+```bash
+git pull
+docker compose up -d --build        # Hermes остаётся прежним; данные в томе сохраняются
+docker compose logs -f hermes
+```
+
+### Подтянуть новую версию Hermes
+
+Текущий контейнер **не затрагивается**, пока вы не выполните `up -d`: сборка и тесты идут отдельно. Откат — возврат тега.
+
+```bash
+# 1. Какие релизы вышли (только стабильные теги) и какой сейчас закреплён
+curl -fsS 'https://hub.docker.com/v2/repositories/nousresearch/hermes-agent/tags?page_size=100&ordering=last_updated' \
+  | grep -o '"name":"v[0-9][0-9.]*"' | cut -d'"' -f4 | sort -uV | tail -5
+grep ^HERMES_IMAGE .env
+
+# 2. Резервная копия данных (команда из раздела «Docker», храните как секрет)
+
+# 3. Собрать на новой версии (тег впишите в .env: HERMES_IMAGE=nousresearch/hermes-agent:v0.24.0)
+docker compose build --pull
+
+# 4. Проверить совместимость плагина с новым Hermes, не трогая работающий контейнер
+bash scripts/run_tests_docker.sh        # нужны uv или pip на хосте; ожидаем: passed, 0 failed
+
+# 5. Если тесты зелёные — запустить и проверить вручную
+docker compose up -d
+docker compose logs -f hermes           # ждём "yandex_messenger connected ... (polling mode)"
+docker compose exec hermes hermes --version
+```
+
+После запуска проверьте в чате: обычный ответ, карточку подтверждения опасной команды (например `rm -rf /tmp/x`), `/model`
+под администратором и отказ `/model` у обычного пользователя. Тесты не видят стриминг и вид карточек в клиенте.
+
+**Откат**, если что-то сломалось: верните прежний тег в `.env` и выполните `docker compose up -d --build` (слои в кэше,
+это быстро). Если новая версия успела изменить формат данных в томе — восстановите том из копии шага 2.
+
+**Если тесты упали:** оставайтесь на старом теге (контейнер работает как работал) и отправьте вывод тестов
+разработчику плагина: обычно это правка одного-двух мест в адаптере. Не переходите на `latest` «в обход».
+
+Прочее:
+
+* `hermes update` внутри контейнера не нужен и не поможет: образ неизменяемый, обновление — это пересборка.
+* Закрепив новый тег, закоммитьте его в `.env.example` (и в `docker-compose.yml` / `Dockerfile`, если меняли умолчание),
+  чтобы следующая установка сразу брала проверенную версию.
+* Мигрирует ли Hermes сам старые данные в томе при старте новой версии — не проверялось; поэтому копия тома в шаге 2 обязательна.
 
 ### Статус проверки
 
@@ -198,11 +289,12 @@ hermes gateway restart
 | Кнопки | Подтверждение опасных команд, уточняющие вопросы (`clarify`), slash-confirm, выбор модели (с пагинацией и группами провайдеров), выбор значения, запрос обновления. Нажатия — `server_action`; на время обработки карточка блокируется `set_elements_state` |
 | Группы | Реакция только на `@бота`, reply боту или `/команду` (`REQUIRE_MENTION`), фильтр `ALLOWED_CHATS` |
 | Авторизация | По `from.login` через стандартные `YANDEX_MESSENGER_ALLOWED_USERS` / `ALLOW_ALL_USERS` и pairing Hermes; нажавший кнопку проверяется отдельно (fail-closed) |
+| Администраторы | `YANDEX_MESSENGER_ADMIN_USERS`: только админ меняет модель и настройки (команды и кнопки-пикеры), остальным — безопасный набор команд |
 | Прокси | `YANDEX_MESSENGER_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` с учётом `NO_PROXY`, HTTP(S) и SOCKS |
 | Cron / `send_message` | `standalone_sender_fn` — доставка без запущенного gateway |
 
-Требования к Hermes: версия с plugin-платформами. Тесты проходят на хостовой установке (commit `b200f5bc`) и на образе
-`nousresearch/hermes-agent:latest` (commit `3b421578`); обе на Python 3.14. Дополнительных pip-зависимостей нет: `aiohttp`
+Требования к Hermes: версия с plugin-платформами. Тесты проходят на хостовой установке (commit `b200f5bc`) и на образах
+`nousresearch/hermes-agent:v0.23.1` (commit `3b421578`, закреплён) и `v0.23.0`; везде Python 3.14. Дополнительных pip-зависимостей нет: `aiohttp`
 уже в Hermes (для SOCKS-прокси нужен `aiohttp_socks`, в образе он есть).
 
 ## Переменные плагина
@@ -213,6 +305,8 @@ hermes gateway restart
 |---|---|---|
 | `YANDEX_MESSENGER_BOT_TOKEN` | — | OAuth-токен бота (обязательно) |
 | `YANDEX_MESSENGER_ALLOWED_USERS` | — | Логины (рабочая почта в Яндекс 360) через запятую, регистр не важен |
+| `YANDEX_MESSENGER_ADMIN_USERS` | пусто = без ограничений | Логины администраторов: только им доступны `/model` и прочие служебные команды (см. [Администраторы и пользователи](#администраторы-и-пользователи)) |
+| `YANDEX_MESSENGER_USER_COMMANDS` | `new,stop,status,retry,undo,history,title,resume,sessions,queue,usage,approve,deny,version` | Команды обычных пользователей при заданном `ADMIN_USERS` (`/help` и `/whoami` всегда) |
 | `YANDEX_MESSENGER_ALLOW_ALL_USERS` | `false` | Разрешить всем (только для разработки) |
 | `YANDEX_MESSENGER_ALLOWED_CHATS` | пусто = любые | ID групповых чатов, где бот отвечает |
 | `YANDEX_MESSENGER_REQUIRE_MENTION` | `true` | В группах отвечать только на упоминание / reply / `/команду` |

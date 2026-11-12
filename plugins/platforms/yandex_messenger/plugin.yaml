@@ -20,6 +20,14 @@ optional_env:
     description: "Через запятую логины пользователей, которым разрешено писать боту"
     prompt: "Allowed users (logins, comma-separated)"
     password: false
+  - name: YANDEX_MESSENGER_ADMIN_USERS
+    description: "Логины администраторов (через запятую): только им доступны /model, /config, /yolo и другие служебные команды. Пусто = ограничений нет"
+    prompt: "Admin logins (comma-separated)"
+    password: false
+  - name: YANDEX_MESSENGER_USER_COMMANDS
+    description: "Команды, доступные обычным пользователям при включённом ADMIN_USERS (по умолчанию: new,stop,status,retry,undo,history,title,resume,sessions,queue,usage,approve,deny,version; /help и /whoami всегда)"
+    prompt: "Commands for non-admin users"
+    password: false
   - name: YANDEX_MESSENGER_ALLOW_ALL_USERS
     description: "Разрешить любому пользователю писать боту (только для разработки)"
     prompt: "Allow all users? (true/false)"

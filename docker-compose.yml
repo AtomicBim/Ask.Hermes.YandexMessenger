@@ -11,7 +11,8 @@ services:
     build:
       context: .
       args:
-        HERMES_IMAGE: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}
+        # Pinned on purpose (the plugin uses Hermes internals); change it in .env, see README "Обновление Hermes".
+        HERMES_IMAGE: ${HERMES_IMAGE:-nousresearch/hermes-agent:v0.23.1}
     image: ask-hermes-yandex:latest
     container_name: hermes-yandex
     restart: unless-stopped

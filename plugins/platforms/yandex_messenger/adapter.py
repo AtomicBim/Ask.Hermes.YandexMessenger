@@ -220,6 +220,7 @@ class YandexMessengerAdapter(InteractiveMixin, BasePlatformAdapter):
                 "YANDEX_MESSENGER_WEBHOOK_SECRET must be set in webhook mode (the Bot API does not sign "
                 "webhook calls; the secret in the URL is the only authentication)",
             )
+        self._log_command_policy()
         await self._close_client()
         # The proxy is resolved once, explicitly (YANDEX_MESSENGER_PROXY > HTTPS_PROXY/ALL_PROXY, NO_PROXY honoured),
         # so the client itself never reads the environment (trust_env stays False).
@@ -260,6 +261,21 @@ class YandexMessengerAdapter(InteractiveMixin, BasePlatformAdapter):
             "webhook" if settings.webhook_mode else "polling",
         )
         return True
+
+    def _log_command_policy(self) -> None:
+        from gateway.slash_access import policy_from_extra
+
+        policy = policy_from_extra(getattr(self.config, "extra", None) or {}, "dm")
+        if policy.enabled:
+            logger.info(
+                "[%s] slash-command gating ON: %d admin(s); other users may run /help /whoami and %s",
+                self.name, len(policy.admin_user_ids), ", ".join(f"/{c}" for c in sorted(policy.user_allowed_commands)) or "nothing else",
+            )
+        else:
+            logger.warning(
+                "[%s] slash-command gating OFF: every allowed user can run /model, /config, /yolo and other "
+                "settings commands. Set YANDEX_MESSENGER_ADMIN_USERS to restrict them to administrators.", self.name,
+            )
 
     async def _start_polling(self, me: dict, *, is_reconnect: bool) -> None:
         if me.get("webhook_url"):

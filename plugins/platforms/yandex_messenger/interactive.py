@@ -41,6 +41,7 @@ APPROVAL_CHOICES = frozenset({"once", "session", "always", "deny"})
 _STRINGS = {
     "en": {
         "unauthorized": "⛔ You are not authorized to use this button.",
+        "admin_only": "⛔ Only an administrator can change settings.",
         "already_resolved": "This prompt was already resolved or has expired.",
         "invalid": "Invalid button data.",
         "resolved_once": "✅ Allowed once",
@@ -89,6 +90,7 @@ _STRINGS = {
     },
     "ru": {
         "unauthorized": "⛔ У вас нет прав на это действие.",
+        "admin_only": "⛔ Менять настройки может только администратор.",
         "already_resolved": "Этот запрос уже обработан или устарел.",
         "invalid": "Некорректные данные кнопки.",
         "resolved_once": "✅ Разрешено один раз",
@@ -324,6 +326,26 @@ class InteractiveMixin:
         if self._is_tap_user_authorized(tap):
             return True
         await self._notify_tap(tap, tr("unauthorized"))
+        return False
+
+    def _is_tap_admin(self, tap: Tap) -> bool:
+        """Settings pickers (``/model``, ``/reasoning`` ...) are admin-only whenever slash gating is on.
+
+        Same policy Hermes applies to the commands that open them (``gateway/slash_access.py``), so a card
+        that is visible to other chat members can not be driven by a non-admin. Gating off -> everyone.
+        """
+        from gateway.slash_access import policy_from_extra
+
+        scope = "dm" if tap.is_private else "group"
+        policy = policy_from_extra(getattr(self.config, "extra", None) or {}, scope)
+        return policy.is_admin(tap.login)
+
+    async def _tap_admin_authorized(self, tap: Tap) -> bool:
+        if not await self._tap_authorized(tap):
+            return False
+        if self._is_tap_admin(tap):
+            return True
+        await self._notify_tap(tap, tr("admin_only"))
         return False
 
     # ------------------------------------------------------------------ approval prompt
@@ -833,10 +855,10 @@ class InteractiveMixin:
             return
         try:
             if cb.startswith(("mp:", "mpg:", "mpv:", "mm:", "mc:", "mb", "mx", "mg:")):
-                if await self._tap_authorized(tap):
+                if await self._tap_admin_authorized(tap):
                     await self._on_model_picker_tap(tap, cb)
             elif cb.startswith("cp:"):
-                if await self._tap_authorized(tap):
+                if await self._tap_admin_authorized(tap):
                     await self._on_choice_picker_tap(tap, cb)
             elif cb.startswith("ea:"):
                 await self._on_approval_tap(tap, cb)
