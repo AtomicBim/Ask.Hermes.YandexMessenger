@@ -4,8 +4,9 @@
 # this file (or hermes.local.yaml) changes; keys that are not listed are never touched. Edit the file and run
 # `docker compose restart hermes` - no rebuild needed (the directory is mounted read-only).
 #
-# Private values (names, internal vocabulary) go to config/hermes.local.yaml: it is git-ignored and merged on top.
-# API keys never belong here: they go to .env (OPENROUTER_API_KEY, GROQ_API_KEY, GEMINI_API_KEY).
+# Organisation-specific values (the stt.prompt vocabulary) live in config/hermes.local.yaml, merged on top.
+# The repository is PUBLIC: never put secrets here. API keys go to .env (OPENROUTER_API_KEY, GROQ_API_KEY,
+# GEMINI_API_KEY).
 
 model:
   default: "~deepseek/deepseek-pro-latest"

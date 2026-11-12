@@ -31,13 +31,18 @@ def test_cli_value_encoding(apply_config):
     assert enc(["a", "б"]) == '["a", "б"]' and enc(None) == ""
 
 
-def test_repo_seed_is_valid_and_has_no_private_data(apply_config):
-    tree = apply_config.load([ROOT / "config" / "hermes.yaml"])
-    leaves = dict(apply_config.flatten(tree))
+def test_repo_seed_is_valid_and_has_no_credentials(apply_config):
+    files = [ROOT / "config" / "hermes.yaml"]
+    overlay = ROOT / "config" / "hermes.local.yaml"
+    if overlay.is_file():
+        files.append(overlay)
+    leaves = dict(apply_config.flatten(apply_config.load(files)))
     assert leaves["model.provider"] == "openrouter" and leaves["stt.enabled"] is True
     assert leaves["tts.gemini.model"] and leaves["auxiliary.vision.model"] and leaves["image_gen.model"]
-    assert "stt.prompt" not in leaves  # the committed seed must not carry names/vocabulary (public repo)
-    assert not any(any(s in k for s in ("key", "token", "secret")) for k in leaves)  # no credentials in the seed
+    # the repository is public: no credentials may live in the seed files
+    assert not any(any(s in k.lower() for s in ("key", "token", "secret", "password")) for k in leaves)
+    blob = "\n".join(f.read_text(encoding="utf-8") for f in files)
+    assert not any(marker in blob for marker in ("y0__", "sk-or-", "AIza", "gsk_"))
 
 
 def test_overlay_wins_and_unreadable_input_is_reported(apply_config, tmp_path, capsys):

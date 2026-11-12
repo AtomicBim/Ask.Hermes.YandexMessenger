@@ -28,7 +28,7 @@ else
   log "warning: 'hermes plugins enable $KEY' failed; run it manually inside the container"
 fi
 
-# 3. Apply the seed config (config/hermes.yaml + optional private config/hermes.local.yaml).
+# 3. Apply the seed config (config/hermes.yaml + optional overlay config/hermes.local.yaml).
 #    The compose file mounts ./config at /opt/hermes-seed; without the mount the copy baked into the image is used.
 #    Applied on the first start and again only when the seed content changes (manual `hermes model` / `config set`
 #    changes survive restarts of an unchanged seed). HERMES_CONFIG_RESEED=1 forces a re-apply.

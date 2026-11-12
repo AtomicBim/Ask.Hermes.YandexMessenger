@@ -16,7 +16,7 @@ USER root
 COPY --chmod=a+rX,go-w plugins/platforms/yandex_messenger /opt/yandex-messenger-plugin/yandex_messenger
 
 # Seed config (defaults baked in; docker-compose.yml mounts ./config over /opt/hermes-seed so edits need no rebuild).
-COPY --chmod=a+rX,go-w config/hermes.yaml /opt/yandex-messenger-plugin/config/hermes.yaml
+COPY --chmod=a+rX,go-w config/ /opt/yandex-messenger-plugin/config/
 COPY --chmod=a+rX,go-w docker/apply_config.py /opt/yandex-messenger-plugin/apply_config.py
 
 # Runs after the base image's own cont-init scripts (01-hermes-setup, 015-..., 02-reconcile-profiles).

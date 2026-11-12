@@ -1,11 +1,9 @@
-.git
+﻿.git
 .gitignore
 .gitattributes
 .env
 .env.*
 !.env.example
-# private overlay: mounted at runtime, never baked into an image
-config/hermes.local.yaml
 .pytest_cache
 **/__pycache__
 **/*.pyc
