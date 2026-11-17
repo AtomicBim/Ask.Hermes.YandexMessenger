@@ -172,6 +172,15 @@ docker compose exec hermes grep "slash-command gating" /opt/data/logs/gateway.lo
   отключены). Применяются на **каждом** старте и перекрывают и сид, и всё, что выбрано в рантайме. Если они не заданы,
   на каждом старте применяются `model.default` / `model.provider` из `config/hermes.yaml` (с предупреждением в логе).
 
+### Общие скиллы (`skills/`)
+
+Каталог `skills/` в репозитории содержит скиллы, которые получают все пользователи: `yandex-disk` (WebDAV), `yandex-calendar`
+(CalDAV), `imap-mail-search` (почта по IMAP), `security-recon` (аудит своего хоста). Они запекаются в образ и **при каждом старте**
+копируются в `/opt/data/skills/`: каталог общего скилла заменяется целиком (обновление приезжает с пересборкой образа),
+скиллы пользователя с другими именами не затрагиваются. В `skills/` нельзя класть личные данные, логины и секреты: репозиторий публичный,
+тест `tests/test_shared_skills.py` это проверяет. Чтобы добавить скилл: создайте `skills/<имя>/SKILL.md` (поле `name` должно совпадать с именем каталога),
+выполните `docker compose up -d --build`.
+
 ### Экспорт настроек агента пользователя (скиллы и MCP)
 
 Полная пошаговая инструкция: [`docs/agent-export.md`](docs/agent-export.md).
@@ -394,4 +403,5 @@ docker/    cont-init-yandex-messenger.sh  apply_config.py   # s6-шаг: пла�
 scripts/   sync_client.py  install_wsl.sh  run_tests_wsl.sh  run_tests_docker.sh  probe_api.py
 tests/     test_inbound / test_outbound / test_interactive / test_transport / test_registration / test_discovery / test_seed_config  (+ conftest, fake_yandex)
 docs/      API_FINDINGS.md, agent-export.md
+skills/    общие скиллы агента (копируются в /opt/data/skills при старте)
 ```

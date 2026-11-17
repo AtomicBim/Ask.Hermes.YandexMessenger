@@ -85,6 +85,20 @@ git push origin <user>
    не трогаются), затем `chown hermes:hermes`.
 6. Ветки `agents/<user>/` в `master` **не переносить**. После слияния пересоздать ветки пользователей от нового `master`.
 
+## Что уже перенесено в master
+
+Первая выгрузка трёх пользователей разобрана. В общий каталог `skills/` вошли `yandex-disk`, `yandex-calendar`, `imap-mail-search`
+(из `lebedev`) и `security-recon` (из `grigoriev`); они устанавливаются всем при старте контейнера. Личные скиллы остались
+в ветках пользователей: `russian-rail-tickets`, `real-estate-product-concept`, `yandex-disk-webdav`, `audio-transcription`.
+MCP-серверов ни у кого нет, подключения к Яндексу сделаны скиллами по WebDAV, CalDAV и IMAP.
+
+После обновления `master` каждому пользователю нужно пересоздать свою ветку от него и пересобрать контейнер:
+```bash
+git fetch origin && git checkout <user> && git reset --hard origin/master   # личные скиллы лежат в истории ветки; сначала сохраните agents/<user>/, если он нужен
+docker compose up -d --build
+docker compose logs --tail=40 hermes | grep "shared skills"                  # shared skills synced: 4
+```
+
 ## Модель агента
 
 Модель задаётся только в `.env` (`HERMES_MODEL`, `HERMES_PROVIDER`) и применяется при каждом старте контейнера. Команда `/model`
