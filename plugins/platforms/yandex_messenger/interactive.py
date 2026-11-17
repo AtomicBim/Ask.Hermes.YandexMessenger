@@ -4,15 +4,14 @@ A port of the Telegram adapter's button flows onto ``suggest_buttons``:
 
 * every button carries ``server_action{name="hermes", payload={"cb": "<callback string>"}}``
   plus ``set_elements_state`` that disables the whole card while the bot works;
-* callback strings are 1:1 with Telegram (``ea:`` ``cl:`` ``sc:`` ``update_prompt:`` ``mp:`` ``mpg:``
-  ``mpv:`` ``mm:`` ``mg:`` ``mc:`` ``mb`` ``mx`` ``cp:``) so the dispatcher logic is the same;
+* callback strings are 1:1 with Telegram (``ea:`` ``cl:`` ``sc:`` ``update_prompt:`` ``cp:``) so the
+  dispatcher logic is the same; the model picker is deliberately NOT ported (the model is set via .env);
 * the Bot API has no ``answerCallbackQuery``: feedback is the card edit; refusals and expiries go
   to the tapping user as a private notice and never touch the shared card.
 """
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import itertools
 import logging
@@ -36,6 +35,8 @@ MAX_TEXT = 6000
 _CARD_CAP = 500
 PICKER_DISABLE_SECS = 15
 APPROVAL_CHOICES = frozenset({"once", "session", "always", "deny"})
+# callback prefixes of the removed model picker (cards that may still be open in chats)
+_LEGACY_MODEL_PICKER_PREFIXES = ("mp:", "mpg:", "mpv:", "mm:", "mc:", "mb", "mx", "mg:")
 
 # --------------------------------------------------------------------------- i18n
 _STRINGS = {
@@ -66,25 +67,14 @@ _STRINGS = {
         "update_yes": "Yes",
         "update_no": "No",
         "update_answered": "Update prompt answered: {answer}",
-        "picker_title": "⚙ Model picker",
-        "current_model": "Current model: {model}",
-        "provider_label": "Provider: {provider}",
-        "select_provider": "Select a provider:",
-        "select_model": "Select a model:",
-        "provider_family": "Provider family: {family}",
-        "more_available": "{count} more available",
         "unknown_model": "unknown",
-        "prev": "◀ Prev",
-        "next": "Next ▶",
-        "back": "◀ Back",
-        "cancel": "✖ Cancel",
-        "cancelled": "Selection cancelled.",
+        "model_locked": (
+            "The model is set only by the deployment (HERMES_MODEL / HERMES_PROVIDER in .env, applied on "
+            "container restart) and cannot be changed from the chat. Current model: {model}"
+        ),
         "picker_expired": "This picker has expired — run the command again.",
         "invalid_selection": "Invalid selection.",
-        "switch_anyway": "Switch anyway",
-        "switch_error": "Model switch failed: {error}",
         "apply_error": "Could not apply selection: {error}",
-        "provider_not_found": "Provider not found.",
         "no_choices": "No choices",
         "user_fallback": "user",
     },
@@ -116,24 +106,14 @@ _STRINGS = {
         "update_no": "Нет",
         "update_answered": "Ответ на запрос обновления: {answer}",
         "picker_title": "⚙ Выбор модели",
-        "current_model": "Текущая модель: {model}",
-        "provider_label": "Провайдер: {provider}",
-        "select_provider": "Выберите провайдера:",
-        "select_model": "Выберите модель:",
-        "provider_family": "Семейство провайдеров: {family}",
-        "more_available": "ещё доступно: {count}",
         "unknown_model": "неизвестно",
-        "prev": "◀ Назад",
-        "next": "Вперёд ▶",
-        "back": "◀ К списку",
-        "cancel": "✖ Отмена",
-        "cancelled": "Выбор отменён.",
+        "model_locked": (
+            "Модель задаётся только при развёртывании (HERMES_MODEL / HERMES_PROVIDER в .env, применяется "
+            "при перезапуске контейнера) и не меняется из чата. Текущая модель: {model}"
+        ),
         "picker_expired": "Выбор устарел — повторите команду.",
         "invalid_selection": "Некорректный выбор.",
-        "switch_anyway": "Всё равно переключить",
-        "switch_error": "Не удалось сменить модель: {error}",
         "apply_error": "Не удалось применить выбор: {error}",
-        "provider_not_found": "Провайдер не найден.",
         "no_choices": "Нет вариантов",
         "user_fallback": "пользователь",
     },
@@ -153,6 +133,22 @@ def tr(key: str, **kwargs: Any) -> str:
     table = _STRINGS[_lang()]
     text = table.get(key) or _STRINGS["en"].get(key) or key
     return text.format(**kwargs) if kwargs else text
+
+
+def configured_model() -> str:
+    """Best-effort current ``model.default`` (``HERMES_MODEL`` wins, as in the container init script)."""
+    env = os.environ.get("HERMES_MODEL", "").strip()
+    if env:
+        return env
+    try:
+        from hermes_cli.config import load_config
+
+        model = (load_config() or {}).get("model")
+        if isinstance(model, dict):
+            model = model.get("default")
+        return str(model or "") or tr("unknown_model")
+    except Exception:
+        return tr("unknown_model")
 
 
 @dataclass
@@ -182,9 +178,6 @@ class InteractiveMixin:
     """Interactive UX; mixed into ``YandexMessengerAdapter`` (needs ``_client``, ``_target``,
     ``_error_result``, ``send``, ``send_private_notice``, ``resume_typing_for_chat``)."""
 
-    _PROVIDER_PAGE_SIZE = 10
-    _MODEL_PAGE_SIZE = 8
-
     # ------------------------------------------------------------------ state
     def _init_interactive_state(self) -> None:
         self._approval_counter = itertools.count(1)
@@ -192,7 +185,6 @@ class InteractiveMixin:
         self._approval_request_ids: dict = {}    # approval_id -> tools.approval request_id
         self._slash_confirm_state: dict = {}     # confirm_id -> session_key
         self._clarify_state: dict = {}           # clarify_id -> session_key
-        self._model_picker_state: dict = {}      # chat_id -> picker state
         self._choice_picker_state: dict = {}     # chat_id -> picker state
         self._cards: dict = {}                   # (kind, id) -> {chat_id, message_id, text, choices}
         self._card_seq = itertools.count(1)
@@ -254,16 +246,6 @@ class InteractiveMixin:
         if await self._edit_card(chat_id, message_id, text, empty_keyboard()):
             return True
         return await self._edit_card(chat_id, message_id, text, None)
-
-    async def _replace_card(self, chat_id: str, state: dict, text: str, card: dict) -> None:
-        """Re-render a picker card in place; if editing fails, delete + resend and follow the new id."""
-        if await self._edit_card(chat_id, state.get("msg_id"), text, card):
-            return
-        with contextlib.suppress(Exception):
-            await self._client.delete_message(self._target(chat_id), int(state["msg_id"]))
-        result = await self._post_card(chat_id, text, card)
-        if result.success and result.message_id:
-            state["msg_id"] = result.message_id
 
     # ------------------------------------------------------------------ authorization
     @staticmethod
@@ -329,7 +311,7 @@ class InteractiveMixin:
         return False
 
     def _is_tap_admin(self, tap: Tap) -> bool:
-        """Settings pickers (``/model``, ``/reasoning`` ...) are admin-only whenever slash gating is on.
+        """Settings pickers (``/reasoning`` ...) are admin-only whenever slash gating is on.
 
         Same policy Hermes applies to the commands that open them (``gateway/slash_access.py``), so a card
         that is visible to other chat members can not be driven by a non-admin. Gating off -> everyone.
@@ -603,227 +585,6 @@ class InteractiveMixin:
             result_text = tr("apply_error", error=str(exc))
         await self._finish_picker(chat_id, state, str(result_text or ""))
 
-    # ------------------------------------------------------------------ model picker
-    @staticmethod
-    def _provider_label(slug: str) -> str:
-        try:
-            from hermes_cli.providers import get_label
-
-            return get_label(slug)
-        except Exception:
-            return slug
-
-    @staticmethod
-    def _provider_button(p: dict) -> tuple:
-        count = p.get("total_models", len(p.get("models", [])))
-        label = f"{p['name']} ({count})"
-        if p.get("is_current"):
-            label = f"✓ {label}"
-        return (label, f"mp:{p['slug']}")
-
-    def _nav_row(self, page: int, total_pages: int, prefix: str) -> list:
-        nav = []
-        if page > 0:
-            nav.append((tr("prev"), f"{prefix}:{page - 1}"))
-        nav.append((f"{page + 1}/{total_pages}", "mx:noop"))
-        if page < total_pages - 1:
-            nav.append((tr("next"), f"{prefix}:{page + 1}"))
-        return nav
-
-    def _back_cancel_row(self) -> list:
-        return [(tr("back"), "mb"), (tr("cancel"), "mx")]
-
-    def _paged_rows(self, buttons: list, meta: dict, nav_prefix: str, tail_row: list) -> list:
-        rows = _rows_of_two(buttons)
-        if meta["total_pages"] > 1:
-            rows.append(self._nav_row(meta["page"], meta["total_pages"], nav_prefix))
-        rows.append(tail_row)
-        return rows
-
-    def _provider_rows(self, providers: list, page: int) -> tuple:
-        by_slug = {p.get("slug"): p for p in providers}
-        buttons: list = []
-        try:
-            from hermes_cli.models_catalog_static import group_providers
-        except Exception:
-            group_providers = None
-        if group_providers is not None:
-            for row in group_providers([p.get("slug") for p in providers]):
-                if row["kind"] == "group":
-                    members = [by_slug[m] for m in row["members"] if m in by_slug]
-                    count = sum(m.get("total_models", len(m.get("models", []))) for m in members)
-                    label = f"{row['label']} ▸ ({count})"
-                    if any(m.get("is_current") for m in members):
-                        label = f"✓ {label}"
-                    buttons.append((label, f"mpg:{row['group_id']}"))
-                elif by_slug.get(row["slug"]) is not None:
-                    buttons.append(self._provider_button(by_slug[row["slug"]]))
-        else:
-            buttons = [self._provider_button(p) for p in providers]
-        page_buttons, meta = self._format_choice_page(buttons, page, self._PROVIDER_PAGE_SIZE)
-        return self._paged_rows(page_buttons, meta, "mpv", [(tr("cancel"), "mx")]), meta["page_info"]
-
-    def _provider_list_text(self, state: dict, page_info: str) -> str:
-        model = f"`{state['current_model'] or tr('unknown_model')}`"
-        return (
-            f"**{tr('picker_title')}**\n\n{tr('current_model', model=model)}\n"
-            f"{tr('provider_label', provider=self._provider_label(state['current_provider']))}\n\n"
-            f"{tr('select_provider')}{page_info}"
-        )
-
-    def _model_rows(self, models: list, page: int, provider: Optional[dict]) -> tuple:
-        try:
-            from hermes_cli.model_picker_usage import picker_row_suffix
-        except Exception:
-            picker_row_suffix = lambda _p, _m: ""  # noqa: E731
-        page_models, meta = self._format_choice_page(models, page, self._MODEL_PAGE_SIZE)
-        buttons = []
-        for i, model_id in enumerate(page_models):
-            short = model_id.split("/")[-1] if "/" in model_id else model_id
-            suffix = picker_row_suffix(provider, model_id) or ""
-            room = 38 - (len(suffix) + 3 if suffix else 0)
-            if len(short) > room:
-                short = short[: max(room - 3, 8)] + "..."
-            if suffix:
-                short = f"{short} · {suffix}"
-            buttons.append((short, f"mm:{meta['start'] + i}"))
-        return self._paged_rows(buttons, meta, "mg", self._back_cancel_row()), meta["page_info"]
-
-    async def send_model_picker(
-        self, chat_id: str, providers: list, current_model: str, current_provider: str, session_key: str,
-        on_model_selected, metadata: Optional[dict] = None,
-    ) -> SendResult:
-        state = {
-            "msg_id": None, "providers": providers, "session_key": session_key,
-            "on_model_selected": on_model_selected, "current_model": current_model,
-            "current_provider": current_provider, "provider_page": 0,
-        }
-        rows, info = self._provider_rows(providers, 0)
-        card = self._card_from_specs(rows, timeout=PICKER_DISABLE_SECS)
-        result = await self._post_card(chat_id, self._provider_list_text(state, info), card, metadata)
-        if result.success:
-            state["msg_id"] = result.message_id
-            self._model_picker_state[str(chat_id)] = state
-        return result
-
-    async def _picker_show_providers(self, chat_id: str, state: dict, page: int) -> None:
-        state["provider_page"] = page
-        rows, info = self._provider_rows(state["providers"], page)
-        await self._replace_card(
-            chat_id, state, self._provider_list_text(state, info),
-            self._card_from_specs(rows, timeout=PICKER_DISABLE_SECS),
-        )
-
-    async def _picker_show_models(self, chat_id: str, state: dict, page: int) -> None:
-        models = state.get("model_list", [])
-        state["model_page"] = page
-        provider = next((p for p in state["providers"] if p["slug"] == state.get("selected_provider")), None)
-        rows, info = self._model_rows(models, page, provider)
-        total = provider.get("total_models", len(models)) if provider else len(models)
-        extra = f"\n__{tr('more_available', count=str(total - len(models)))}__" if total > len(models) else ""
-        plan = f"\n⚠️ {provider['plan_line']}" if provider and provider.get("plan_line") else ""
-        provider_name = f"**{state.get('selected_provider_name', '')}**"
-        text = (
-            f"**{tr('picker_title')}**\n\n"
-            f"{tr('provider_label', provider=provider_name)}"
-            f"{info}{plan}\n{tr('select_model')}{extra}"
-        )
-        await self._replace_card(chat_id, state, text, self._card_from_specs(rows, timeout=PICKER_DISABLE_SECS))
-
-    async def _picker_switch(self, chat_id: str, state: dict, model_id: str, provider_slug: str, callback) -> None:
-        self._model_picker_state.pop(chat_id, None)  # claim before the (slow) switch
-        try:
-            result_text = await callback(chat_id, model_id, provider_slug)
-        except Exception as exc:
-            logger.error("[%s] model picker switch failed: %s", self.name, exc)
-            result_text = tr("switch_error", error=str(exc))
-        await self._finish_picker(chat_id, state, str(result_text or ""))
-
-    def _picker_selection(self, state: dict, raw: str) -> Optional[tuple]:
-        try:
-            idx = int(raw)
-        except ValueError:
-            return None
-        models = state.get("model_list", [])
-        callback = state.get("on_model_selected")
-        if idx < 0 or idx >= len(models) or not callback:
-            return None
-        return idx, models[idx], state.get("selected_provider", ""), callback
-
-    async def _on_model_picker_tap(self, tap: Tap, cb: str) -> None:
-        chat_id = tap.chat_id
-        state = self._model_picker_state.get(chat_id)
-        if not state:
-            await self._notify_tap(tap, tr("picker_expired"))
-            return
-        if cb.startswith("mp:"):
-            slug = cb[3:]
-            provider = next((p for p in state["providers"] if p["slug"] == slug), None)
-            if not provider:
-                await self._notify_tap(tap, tr("provider_not_found"))
-                return
-            state.update(selected_provider=slug, selected_provider_name=provider.get("name", slug),
-                         model_list=provider.get("models", []))
-            await self._picker_show_models(chat_id, state, 0)
-        elif cb.startswith("mg:"):
-            if cb[3:].isdigit():
-                await self._picker_show_models(chat_id, state, int(cb[3:]))
-        elif cb.startswith("mpv:"):
-            if cb[4:].isdigit():
-                await self._picker_show_providers(chat_id, state, int(cb[4:]))
-        elif cb.startswith("mc:"):
-            sel = self._picker_selection(state, cb[3:])
-            if sel is None:
-                await self._notify_tap(tap, tr("invalid_selection"))
-                return
-            _idx, model_id, provider_slug, callback = sel
-            await self._picker_switch(chat_id, state, model_id, provider_slug, callback)
-        elif cb.startswith("mm:"):
-            sel = self._picker_selection(state, cb[3:])
-            if sel is None:
-                await self._notify_tap(tap, tr("invalid_selection"))
-                return
-            idx, model_id, provider_slug, callback = sel
-            try:
-                from hermes_cli.model_selection_guards import combined_selection_warning
-
-                warning = await asyncio.to_thread(combined_selection_warning, model_id, provider=provider_slug)
-            except Exception:
-                warning = None
-            if warning is not None:
-                rows = [[(tr("switch_anyway"), f"mc:{idx}")], self._back_cancel_row()]
-                await self._replace_card(
-                    chat_id, state, f"⚠ **{warning.title}**\n\n{warning.message}",
-                    self._card_from_specs(rows, timeout=PICKER_DISABLE_SECS),
-                )
-                return
-            await self._picker_switch(chat_id, state, model_id, provider_slug, callback)
-        elif cb.startswith("mpg:"):
-            group_id = cb[4:]
-            try:
-                from hermes_cli.models_catalog_static import PROVIDER_GROUPS
-
-                label, _desc, member_slugs = PROVIDER_GROUPS.get(group_id, ("", "", []))
-            except Exception:
-                label, member_slugs = "", []
-            by_slug = {p["slug"]: p for p in state["providers"]}
-            members = [by_slug[m] for m in member_slugs if m in by_slug]
-            if not members:
-                await self._notify_tap(tap, tr("provider_not_found"))
-                return
-            rows = _rows_of_two([self._provider_button(p) for p in members]) + [self._back_cancel_row()]
-            text = (
-                f"**{tr('picker_title')}**\n\n{tr('provider_family', family=f'**{label or group_id}**')}\n\n"
-                f"{tr('select_provider')}"
-            )
-            await self._replace_card(chat_id, state, text, self._card_from_specs(rows, timeout=PICKER_DISABLE_SECS))
-        elif cb == "mb":
-            await self._picker_show_providers(chat_id, state, int(state.get("provider_page", 0) or 0))
-        elif cb == "mx":
-            self._model_picker_state.pop(chat_id, None)
-            await self._finish_picker(chat_id, state, tr("cancelled"))
-        # "mx:noop" (page counter) falls through: nothing to do
-
     # ------------------------------------------------------------------ tap dispatcher
     @staticmethod
     def _tap_metadata(tap: Tap) -> Optional[dict]:
@@ -854,9 +615,9 @@ class InteractiveMixin:
         if not tap.chat_id:
             return
         try:
-            if cb.startswith(("mp:", "mpg:", "mpv:", "mm:", "mc:", "mb", "mx", "mg:")):
-                if await self._tap_admin_authorized(tap):
-                    await self._on_model_picker_tap(tap, cb)
+            if cb.startswith(_LEGACY_MODEL_PICKER_PREFIXES):
+                # a card of the removed model picker is still in some chat: refuse, never switch
+                await self._notify_tap(tap, tr("model_locked", model=configured_model()))
             elif cb.startswith("cp:"):
                 if await self._tap_admin_authorized(tap):
                     await self._on_choice_picker_tap(tap, cb)

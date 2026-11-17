@@ -7,3 +7,9 @@
 *.log
 .kilo/
 docs/probe-output.json
+# agent exports (scripts/export_agent.sh): never commit secrets or runtime state
+agents/**/.env
+agents/**/auth*
+agents/**/memories/
+agents/**/sessions/
+agents/**/state*

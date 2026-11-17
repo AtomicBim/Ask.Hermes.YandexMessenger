@@ -1,5 +1,4 @@
 """Buttons: payload shape, callback dispatch to (mocked) Hermes resolvers, auth, races, pickers."""
-import sys
 import types
 
 import pytest
@@ -307,115 +306,6 @@ async def test_choice_picker_without_choices(auth_alice):
     assert not res.success
 
 
-# ---------------------------------------------------------------- model picker
-PROVIDERS = [
-    {"slug": "alpha", "name": "Alpha", "is_current": True, "total_models": 3, "models": ["a/one", "a/two", "a/three"]},
-    {"slug": "beta", "name": "Beta", "total_models": 1, "models": ["b-one"]},
-]
-
-
-@pytest.fixture
-def no_model_warning(monkeypatch):
-    monkeypatch.setattr("hermes_cli.model_selection_guards.combined_selection_warning", lambda *a, **k: None)
-
-
-async def test_model_picker_drill_down_and_switch(auth_alice, fake, no_model_warning):
-    a = auth_alice()
-    picked = []
-
-    async def on_model(chat_id, model_id, provider_slug):
-        picked.append((chat_id, model_id, provider_slug))
-        return f"Switched to `{model_id}`"
-
-    res = await a.send_model_picker(CHAT, PROVIDERS, "a/one", "alpha", "sess", on_model)
-    assert res.success
-    body = fake.last("messages/sendText")["json"]
-    first = {cb_of(b) for b in buttons_of(body)}
-    assert {"mp:alpha", "mp:beta", "mx"} <= first and "a/one" in body["text"]
-    await a._handle_bot_request(tap_update("mp:alpha"))
-    edit = edits(fake)[-1]
-    assert edit["message_id"] == int(res.message_id) and "suggest_buttons" in edit
-    cbs = [cb_of(b) for b in buttons_of(edit)]
-    assert cbs[:3] == ["mm:0", "mm:1", "mm:2"] and "mb" in cbs and "mx" in cbs
-    ids_before = {b["id"] for b in buttons_of(body)}
-    assert not ids_before & {b["id"] for b in buttons_of(edit)}  # a re-render never reuses disabled element ids
-    await a._handle_bot_request(tap_update("mm:1", update_id=9001))
-    assert picked == [(CHAT, "a/two", "alpha")]
-    assert "Switched to" in edits(fake)[-1]["text"] and CHAT not in a._model_picker_state
-
-
-async def test_model_picker_back_cancel_and_pagination(auth_alice, fake, no_model_warning):
-    a = auth_alice()
-    providers = [{"slug": f"p{i:02d}", "name": f"P{i}", "total_models": 1, "models": ["m"]} for i in range(25)]
-
-    async def on_model(*args):  # pragma: no cover
-        raise AssertionError
-
-    await a.send_model_picker(CHAT, providers, "m", "p00", "sess", on_model)
-    cbs = [cb_of(b) for b in buttons_of(fake.last("messages/sendText")["json"])]
-    assert "mpv:1" in cbs and "mx:noop" in cbs
-    await a._handle_bot_request(tap_update("mpv:2"))
-    cbs = [cb_of(b) for b in buttons_of(edits(fake)[-1])]
-    assert "mpv:1" in cbs and "mpv:3" not in cbs and a._model_picker_state[CHAT]["provider_page"] == 2
-    await a._handle_bot_request(tap_update("mp:p21", update_id=9001))
-    await a._handle_bot_request(tap_update("mb", update_id=9002))
-    assert "mp:p20" in [cb_of(b) for b in buttons_of(edits(fake)[-1])]
-    await a._handle_bot_request(tap_update("mx:noop", update_id=9003))
-    await a._handle_bot_request(tap_update("mx", update_id=9004))
-    assert CHAT not in a._model_picker_state and "cancelled" in edits(fake)[-1]["text"]
-
-
-async def test_model_picker_warning_asks_for_confirmation(auth_alice, fake, monkeypatch):
-    a = auth_alice()
-    picked = []
-
-    async def on_model(chat_id, model_id, slug):
-        picked.append(model_id)
-        return "ok"
-
-    warning = types.SimpleNamespace(title="Expensive model", message="costs a lot")
-    monkeypatch.setattr("hermes_cli.model_selection_guards.combined_selection_warning", lambda *a, **k: warning)
-    await a.send_model_picker(CHAT, PROVIDERS, "a/one", "alpha", "sess", on_model)
-    await a._handle_bot_request(tap_update("mp:alpha"))
-    await a._handle_bot_request(tap_update("mm:0", update_id=9001))
-    assert picked == [] and "Expensive model" in edits(fake)[-1]["text"]
-    assert "mc:0" in [cb_of(b) for b in buttons_of(edits(fake)[-1])]
-    await a._handle_bot_request(tap_update("mc:0", update_id=9002))
-    assert picked == ["a/one"]
-
-
-async def test_model_picker_edit_failure_falls_back_to_delete_and_resend(auth_alice, fake, no_model_warning):
-    a = auth_alice()
-
-    async def on_model(*args):  # pragma: no cover
-        return "x"
-
-    res = await a.send_model_picker(CHAT, PROVIDERS, "a/one", "alpha", "sess", on_model)
-    fake.responses["messages/sendText"] = [
-        lambda r, rec: web.json_response({"ok": False, "description": "cannot edit buttons"}, status=400),
-        {"ok": True, "message_id": 4242},
-    ]
-    await a._handle_bot_request(tap_update("mp:alpha"))
-    assert fake.last("messages/delete")["json"]["message_id"] == int(res.message_id)
-    assert a._model_picker_state[CHAT]["msg_id"] == "4242"  # follows the re-sent card
-
-
-async def test_model_picker_expired_and_unauthorized(auth_alice, fake, no_model_warning):
-    a = auth_alice()
-    await a._handle_bot_request(tap_update("mp:alpha"))  # nothing was ever opened
-    assert "expired" in fake.last("messages/sendText")["json"]["text"]
-
-    async def on_model(*args):  # pragma: no cover
-        raise AssertionError
-
-    await a.send_model_picker(CHAT, PROVIDERS, "a/one", "alpha", "sess", on_model)
-    n = len(fake.calls("messages/sendText"))
-    await a._handle_bot_request(tap_update("mp:alpha", login="eve", update_id=9001))
-    notice = fake.calls("messages/sendText")[n]["json"]
-    assert notice["login"] == "eve" and "not authorized" in notice["text"]
-    assert "selected_provider" not in a._model_picker_state[CHAT]
-
-
 # ---------------------------------------------------------------- admin-only settings (slash gating)
 def _gate(adapter, admins=("alice",), commands=("new",)):
     adapter.config.extra.update(
@@ -423,28 +313,24 @@ def _gate(adapter, admins=("alice",), commands=("new",)):
         user_allowed_commands=list(commands), group_user_allowed_commands=list(commands))
 
 
-async def test_model_picker_taps_need_admin_when_gating_is_on(auth_alice, fake, no_model_warning):
+def test_model_picker_is_gone(mod):
+    assert not hasattr(mod.interactive.InteractiveMixin, "send_model_picker")
+    assert not hasattr(mod.interactive.InteractiveMixin, "_on_model_picker_tap")
+
+
+@pytest.mark.parametrize("cb", ["mp:alpha", "mpg:grp", "mpv:2", "mm:1", "mc:1", "mb", "mx", "mx:noop", "mg:1"])
+@pytest.mark.parametrize("login", ["alice", "bob"])
+async def test_legacy_model_picker_taps_are_refused(auth_alice, fake, monkeypatch, cb, login):
+    """A card of the removed picker may still sit in a chat: taps by anyone (admin included) change nothing."""
+    monkeypatch.setenv("HERMES_MODEL", "vendor/locked-model")
     a = auth_alice()
-    a._authorization_check = lambda user, chat_type=None, chat_id=None, **k: user in ("alice", "bob")
+    a._authorization_check = lambda user, chat_type=None, chat_id=None, **k: True
     _gate(a, admins=("alice",))
-    picked = []
-
-    async def on_model(chat_id, model_id, slug):
-        picked.append(model_id)
-        return "ok"
-
-    await a.send_model_picker(CHAT, PROVIDERS, "a/one", "alpha", "sess", on_model)
-    n = len(edits(fake))
-    await a._handle_bot_request(tap_update("mp:alpha", login="bob"))       # allowed user, not an admin
-    assert len(edits(fake)) == n and "selected_provider" not in a._model_picker_state[CHAT]
+    await a._handle_bot_request(tap_update(cb, login=login))
     notice = fake.last("messages/sendText")["json"]
-    assert notice["login"] == "bob" and "administrator" in notice["text"]
-    await a._handle_bot_request(tap_update("mp:alpha", login="alice", update_id=9001))  # the admin
-    assert a._model_picker_state[CHAT]["selected_provider"] == "alpha"
-    await a._handle_bot_request(tap_update("mm:0", login="bob", update_id=9002))        # still no switch for bob
-    assert picked == []
-    await a._handle_bot_request(tap_update("mm:0", login="alice", update_id=9003))
-    assert picked == ["a/one"]
+    assert notice["login"] == login
+    assert "vendor/locked-model" in notice["text"] and "HERMES_MODEL" in notice["text"]
+    assert not edits(fake)  # the shared card is never touched
 
 
 async def test_choice_picker_taps_need_admin_when_gating_is_on(auth_alice, fake):
@@ -462,34 +348,6 @@ async def test_choice_picker_taps_need_admin_when_gating_is_on(auth_alice, fake)
     assert chosen == [] and CHAT in a._choice_picker_state
     await a._handle_bot_request(tap_update("cp:0", login="alice", update_id=9001))
     assert chosen == ["high"]
-
-
-async def test_group_picker_uses_the_group_admin_list(auth_alice, fake, no_model_warning):
-    a = auth_alice()
-    a._authorization_check = lambda user, chat_type=None, chat_id=None, **k: True
-    a.config.extra.update(allow_admin_from=["alice"], group_allow_admin_from=["carol"])  # DM admin != group admin
-    group = "0/0/grp"
-
-    async def on_model(*args):  # pragma: no cover
-        return "x"
-
-    await a.send_model_picker(group, PROVIDERS, "a/one", "alpha", "sess", on_model)
-    await a._handle_bot_request(tap_update("mp:alpha", login="alice", chat_id=group, chat_type="group"))
-    assert "selected_provider" not in a._model_picker_state[group]
-    await a._handle_bot_request(tap_update("mp:alpha", login="carol", chat_id=group, chat_type="group", update_id=9001))
-    assert a._model_picker_state[group]["selected_provider"] == "alpha"
-
-
-async def test_pickers_stay_open_to_everyone_without_gating(auth_alice, fake, no_model_warning):
-    a = auth_alice()  # no admin list configured -> Hermes' default: nothing is restricted
-    a._authorization_check = lambda user, chat_type=None, chat_id=None, **k: True
-
-    async def on_model(*args):  # pragma: no cover
-        return "x"
-
-    await a.send_model_picker(CHAT, PROVIDERS, "a/one", "alpha", "sess", on_model)
-    await a._handle_bot_request(tap_update("mp:alpha", login="bob"))
-    assert a._model_picker_state[CHAT]["selected_provider"] == "alpha"
 
 
 async def test_hermes_runner_refuses_model_for_non_admin(mod, monkeypatch):
@@ -516,7 +374,7 @@ async def test_hermes_runner_refuses_model_for_non_admin(mod, monkeypatch):
     assert check(source("boss@corp.ru", "group"), "yolo") is None
     for cmd in ("model", "config", "yolo", "reasoning", "update"):
         denied = check(source("alice@corp.ru"), cmd)
-        assert denied and cmd in denied, cmd
+        assert denied, cmd  # Hermes may return an i18n key instead of text that names the command
         assert check(source("alice@corp.ru", "group"), cmd)
     for cmd in ("new", "stop", "help", "whoami", "status"):
         assert check(source("alice@corp.ru"), cmd) is None, cmd

@@ -46,7 +46,7 @@ from ._vendor.yandex_messenger_client import (
     to_yandex_markdown,
 )
 from . import gateway_env
-from .interactive import InteractiveMixin
+from .interactive import InteractiveMixin, configured_model, tr
 from .settings import Settings, load_settings, redact_proxy, resolve_proxy
 from .standalone import standalone_send
 from .transport import OffsetStore, PollingLoop, WebhookServer
@@ -70,6 +70,9 @@ def display_filename(path: str) -> str:
     """Basename of ``path`` without Hermes' cache prefix (a file we received and the agent sends back)."""
     name = os.path.basename(path)
     return _CACHE_PREFIX_RE.sub("", name, count=1) or name
+
+
+_MODEL_CMD_RE = re.compile(r"^/model(?![\w-])", re.IGNORECASE)
 
 
 def _loop_time() -> float:
@@ -273,7 +276,7 @@ class YandexMessengerAdapter(InteractiveMixin, BasePlatformAdapter):
             )
         else:
             logger.warning(
-                "[%s] slash-command gating OFF: every allowed user can run /model, /config, /yolo and other "
+                "[%s] slash-command gating OFF: every allowed user can run /config, /yolo and other "
                 "settings commands. Set YANDEX_MESSENGER_ADMIN_USERS to restrict them to administrators.", self.name,
             )
 
@@ -414,6 +417,11 @@ class YandexMessengerAdapter(InteractiveMixin, BasePlatformAdapter):
         user_name = str(sender.get("display_name") or login or user_id)
         text = re.sub(rf"^(/\w+)@{re.escape(self._bot_login)}\b", r"\1", text) if self._bot_login else text
 
+        if _MODEL_CMD_RE.match(text):
+            # The model is fixed by the deployment (.env); nobody switches it from the chat, admins included.
+            await self._reply_model_locked(chat_id, update)
+            return
+
         media_urls: list = []
         media_types: list = []
         inlined: list = []
@@ -468,6 +476,13 @@ class YandexMessengerAdapter(InteractiveMixin, BasePlatformAdapter):
             event.reply_to_author_name = str(author.get("display_name") or author.get("login") or "") or None
             event.reply_to_is_own_message = self._replied_to_bot(update)
         await self.handle_message(event)
+
+    async def _reply_model_locked(self, chat_id: str, update: dict) -> None:
+        """Answer ``/model`` with a refusal text; the command never reaches Hermes."""
+        thread_id = update.get("thread_id")
+        metadata = {"thread_id": str(thread_id)} if thread_id else None
+        with contextlib.suppress(Exception):
+            await self.send(chat_id, tr("model_locked", model=configured_model()), metadata=metadata)
 
     @staticmethod
     def _first_is_voice(paths: list) -> bool:

@@ -16,8 +16,35 @@ async def test_dm_text_builds_event(make_adapter, make_update):
 
 async def test_command_type(make_adapter, make_update):
     a = make_adapter()
-    await a._dispatch_update(make_update("/model gpt"))
+    await a._dispatch_update(make_update("/help"))
     assert a.events[0].message_type.value == "command"
+
+
+@pytest.mark.parametrize("text", ["/model", "/model gpt-5", "/model@hermes_bot", "/model@hermes_bot gpt", "/MODEL x"])
+@pytest.mark.parametrize("login", ["alice", "boss"])
+async def test_model_command_is_refused_for_everyone(make_adapter, make_update, fake, monkeypatch, text, login):
+    monkeypatch.setenv("HERMES_MODEL", "vendor/locked-model")
+    a = make_adapter(extra={"allow_admin_from": ["boss"], "group_allow_admin_from": ["boss"]})
+    await a._dispatch_update(make_update(text, login=login))
+    assert a.events == []  # never reaches Hermes, admins included
+    reply = fake.last("messages/sendText")["json"]
+    assert "vendor/locked-model" in reply["text"] and "HERMES_MODEL" in reply["text"]
+
+
+async def test_model_command_is_refused_in_groups(make_adapter, make_update, fake, monkeypatch):
+    monkeypatch.setenv("HERMES_MODEL", "vendor/locked-model")
+    a = make_adapter()
+    await a._dispatch_update(make_update("/model@hermes_bot x", chat_type="group", chat_id="0/0/grp"))
+    assert a.events == []
+    assert "vendor/locked-model" in fake.last("messages/sendText")["json"]["text"]
+
+
+async def test_model_lookalike_commands_are_not_blocked(make_adapter, make_update):
+    a = make_adapter()
+    await a._dispatch_update(make_update("/models", update_id=1))
+    await a._dispatch_update(make_update("/model-info", update_id=2))
+    await a._dispatch_update(make_update("what is /model for?", update_id=3))
+    assert [e.text for e in a.events] == ["/models", "/model-info", "what is /model for?"]
 
 
 async def test_dedup_on_update_id(make_adapter, make_update):
@@ -60,8 +87,8 @@ async def test_group_requires_mention(make_adapter, make_update):
     assert a.events[-1].text == "hey , status".replace(" ,", ",")
     await a._dispatch_update(make_update("/help", update_id=4, **g))
     assert a.events[-1].text == "/help"
-    await a._dispatch_update(make_update("/model@hermes_bot gpt", update_id=5, **g))
-    assert a.events[-1].text == "/model gpt"
+    await a._dispatch_update(make_update("/status@hermes_bot now", update_id=5, **g))
+    assert a.events[-1].text == "/status now"
     await a._dispatch_update(make_update("email me at x@hermes_bot.example", update_id=6, **g))
     assert len(a.events) == 4  # a look-alike inside an address is not a mention
 

@@ -8,6 +8,8 @@
 # The repository is PUBLIC: never put secrets here. API keys go to .env (OPENROUTER_API_KEY, GROQ_API_KEY,
 # GEMINI_API_KEY).
 
+# The main model is re-applied on EVERY start (cont-init step 4): HERMES_MODEL / HERMES_PROVIDER from .env
+# win; these two values are the fallback when .env does not set them. /model in the chat is disabled.
 model:
   default: "~deepseek/deepseek-pro-latest"
   provider: "openrouter"

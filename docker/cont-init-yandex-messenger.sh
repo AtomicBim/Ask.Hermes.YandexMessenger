@@ -30,8 +30,9 @@ fi
 
 # 3. Apply the seed config (config/hermes.yaml + optional overlay config/hermes.local.yaml).
 #    The compose file mounts ./config at /opt/hermes-seed; without the mount the copy baked into the image is used.
-#    Applied on the first start and again only when the seed content changes (manual `hermes model` / `config set`
-#    changes survive restarts of an unchanged seed). HERMES_CONFIG_RESEED=1 forces a re-apply.
+#    Applied on the first start and again only when the seed content changes (manual `config set` changes of
+#    other keys survive restarts of an unchanged seed). HERMES_CONFIG_RESEED=1 forces a re-apply.
+#    The model itself is the exception: step 4 re-applies it on every start.
 SEED_DIR=/opt/hermes-seed
 [ -f "$SEED_DIR/hermes.yaml" ] || SEED_DIR=/opt/yandex-messenger-plugin/config
 SEED_FILES="$SEED_DIR/hermes.yaml"
@@ -55,12 +56,45 @@ else
   log "no seed config found; skipping"
 fi
 
-# 4. Optional model override on EVERY start (wins over the seed; otherwise configure with `hermes model`).
-if [ -n "${HERMES_MODEL:-}" ]; then
-  as_hermes "$HERMES_BIN" config set model.default "$HERMES_MODEL" >/dev/null 2>&1 \
-    && log "model.default = $HERMES_MODEL" || log "warning: could not set model.default"
+# 4. The model is fixed by the deployment and re-applied on EVERY start, so nothing chosen at runtime
+#    (`hermes model`, `/config set`) survives a restart. The chat command /model is blocked by the plugin.
+#    Source of truth: HERMES_MODEL / HERMES_PROVIDER from .env; when unset, model.default / model.provider
+#    from the seed config (hermes.yaml + hermes.local.yaml).
+seed_model_value() {  # $1 = "default" | "provider"; prints the seed value (the overlay wins) or nothing
+  [ -n "${SEED_FILES:-}" ] || return 0
+  # shellcheck disable=SC2086
+  /opt/hermes/.venv/bin/python - "$1" $SEED_FILES <<'PY' 2>/dev/null || true
+import sys
+import yaml
+key, value = sys.argv[1], None
+for path in sys.argv[2:]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception:
+        continue
+    model = data.get("model") if isinstance(data, dict) else None
+    if isinstance(model, dict) and model.get(key):
+        value = str(model[key])
+if value:
+    print(value)
+PY
+}
+
+MODEL="${HERMES_MODEL:-}"
+PROVIDER="${HERMES_PROVIDER:-}"
+if [ -z "$MODEL" ]; then
+  MODEL="$(seed_model_value default)"
+  log "warning: HERMES_MODEL is not set in .env; using model.default from the seed config (${MODEL:-none})"
 fi
-if [ -n "${HERMES_PROVIDER:-}" ]; then
-  as_hermes "$HERMES_BIN" config set model.provider "$HERMES_PROVIDER" >/dev/null 2>&1 \
-    && log "model.provider = $HERMES_PROVIDER" || log "warning: could not set model.provider"
+if [ -z "$PROVIDER" ]; then
+  PROVIDER="$(seed_model_value provider)"
+fi
+if [ -n "$MODEL" ]; then
+  as_hermes "$HERMES_BIN" config set model.default "$MODEL" >/dev/null 2>&1 \
+    && log "model.default = $MODEL" || log "warning: could not set model.default"
+fi
+if [ -n "$PROVIDER" ]; then
+  as_hermes "$HERMES_BIN" config set model.provider "$PROVIDER" >/dev/null 2>&1 \
+    && log "model.provider = $PROVIDER" || log "warning: could not set model.provider"
 fi

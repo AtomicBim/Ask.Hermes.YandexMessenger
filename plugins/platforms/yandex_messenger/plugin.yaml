@@ -6,7 +6,7 @@ description: >
   Yandex Messenger (Яндекс 360 для бизнеса) Bot API gateway adapter for Hermes Agent.
   Polling (getUpdates) by default, webhook when YANDEX_MESSENGER_WEBHOOK_URL is set.
   Streaming by message edits, typing/status indicator, media in/out, tappable
-  buttons (approval, clarify, slash-confirm, model/choice pickers), reactions,
+  buttons (approval, clarify, slash-confirm, choice pickers), reactions,
   group chats with mention gating and cron delivery.
 author: Ask.Hermes.YandexMessenger
 requires_env:
@@ -21,7 +21,7 @@ optional_env:
     prompt: "Allowed users (logins, comma-separated)"
     password: false
   - name: YANDEX_MESSENGER_ADMIN_USERS
-    description: "Логины администраторов (через запятую): только им доступны /model, /config, /yolo и другие служебные команды. Пусто = ограничений нет"
+    description: "Логины администраторов (через запятую): только им доступны /config, /yolo и другие служебные команды (/model отключена для всех — модель задаётся через HERMES_MODEL в .env). Пусто = ограничений нет"
     prompt: "Admin logins (comma-separated)"
     password: false
   - name: YANDEX_MESSENGER_USER_COMMANDS
