@@ -75,6 +75,28 @@ def test_guard_blocks_secret_inside_a_skill(exporter, tmp_path, capsys):
     assert "SKILL.md" in capsys.readouterr().err
 
 
+def test_documentation_prose_is_not_a_secret(exporter):
+    prose = [
+        "hermes auth - re-authenticate OAuth providers (or hermes auth add <provider>)",
+        "Hermes uses as a bearer. It is not a public OAuth provider that Karakeep",
+        'Authorization: "Bearer sk-xxxxxxxxxxxxxxxxxxxx"',
+        "a local OpenAI API backed by whichever OAuth provider you're signed into.",
+        "Authorization: Bearer ${TRACKER_TOKEN}",
+    ]
+    for line in prose:
+        assert not exporter.FINAL_GUARD_RE.search(line), line
+    for line in ("Authorization: Bearer abcd1234efgh5678ijkl", "OAuth AQAAAAAexample1234567", "token y0_FAKE1234567890abcdef"):
+        assert exporter.FINAL_GUARD_RE.search(line), line
+
+
+def test_modified_bundled_skill_is_not_exported(exporter, tmp_path):
+    data, bundled = _data(tmp_path, CONFIG)
+    (data / "skills" / "shipped" / "SKILL.md").write_text("# shipped, refreshed by Hermes in the volume\n", encoding="utf-8")
+    out = tmp_path / "agents"
+    assert exporter.main(["alice", "--data", str(data), "--bundled", str(bundled), "--out", str(out)]) == 0
+    assert not (out / "alice" / "skills" / "shipped").exists() and (out / "alice" / "skills" / "mine").exists()
+
+
 def test_user_name_is_validated(exporter, tmp_path):
     with pytest.raises(SystemExit):
         exporter.main(["../evil", "--data", str(tmp_path), "--out", str(tmp_path / "agents")])

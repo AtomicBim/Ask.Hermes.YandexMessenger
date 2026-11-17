@@ -38,8 +38,14 @@ SECRET_VALUE_RES = [
     re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
 ]
-# final guard run over every exported text file
-FINAL_GUARD_RE = re.compile(r"y0_[A-Za-z0-9_-]{8,}|AQAAA[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._~+/=-]{8,}|OAuth\s+[A-Za-z0-9._~+/=-]{8,}")
+# final guard run over every exported text file. Yandex token prefixes always count; "Bearer X" / "OAuth X" count
+# only when X looks like a real token (contains a digit, is not a placeholder such as sk-xxxxxxxx), so prose like
+# "OAuth provider" or "bearer token" in documentation is not a hit.
+FINAL_GUARD_RE = re.compile(
+    r"y0_[A-Za-z0-9_-]{8,}|AQAAA[A-Za-z0-9_-]{8,}"
+    r"|(?:Bearer|OAuth)\s+(?![A-Za-z0-9._~+/=-]*(?:x{4,}|\*{3,}|<|\$\{))(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{16,}",
+    re.IGNORECASE,
+)
 ENV_REF_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 SKIP_NAMES = {".env", "auth.json", "auth.lock", "__pycache__", ".git", ".DS_Store"}
 SKIP_SUFFIXES = (".log", ".pyc", ".sqlite", ".db", ".sqlite3")
@@ -128,8 +134,9 @@ def _digest(path: Path) -> str:
     return h.hexdigest()
 
 
-def export_skills(src: Path, dst: Path, bundled: Path | None) -> list[str]:
-    """Copy skills that are not identical to the copy shipped with Hermes. Returns exported relative names."""
+def export_skills(src: Path, dst: Path, bundled: Path | None, include_modified_bundled: bool = False) -> list[str]:
+    """Copy the user's own skills. Skills shipped with Hermes are skipped BY NAME: Hermes refreshes them in the
+    data volume itself, so a byte difference does not mean the user wrote them. Returns exported relative names."""
     exported: list[str] = []
     if not src.is_dir():
         return exported
@@ -141,8 +148,8 @@ def export_skills(src: Path, dst: Path, bundled: Path | None) -> list[str]:
         skill = skill_md.parent
         if any(part in SKIP_NAMES for part in skill.parts):
             continue
-        if bundled_digests.get(skill.name) == _digest(skill):
-            continue  # identical to the bundled skill
+        if skill.name in bundled_digests and not (include_modified_bundled and bundled_digests[skill.name] != _digest(skill)):
+            continue  # shipped with Hermes
         rel = skill.relative_to(src)
         target = dst / rel
         if target.exists():
@@ -175,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data", required=True, type=Path, help="copy of $HERMES_HOME (needs skills/ and config.yaml)")
     parser.add_argument("--bundled", type=Path, default=None, help="directory with the skills shipped with Hermes")
     parser.add_argument("--out", type=Path, default=Path("agents"))
+    parser.add_argument("--include-modified-bundled", action="store_true",
+                        help="also export Hermes' own skills whose content differs from the image (normally noise)")
     args = parser.parse_args(argv)
 
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.user):
@@ -184,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    skills = export_skills(args.data / "skills", out / "skills", args.bundled)
+    skills = export_skills(args.data / "skills", out / "skills", args.bundled, args.include_modified_bundled)
 
     required: dict[str, str] = {}
     config_path = args.data / "config.yaml"
