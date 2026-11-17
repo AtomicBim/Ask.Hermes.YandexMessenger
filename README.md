@@ -172,16 +172,27 @@ docker compose exec hermes grep "slash-command gating" /opt/data/logs/gateway.lo
   отключены). Применяются на **каждом** старте и перекрывают и сид, и всё, что выбрано в рантайме. Если они не заданы,
   на каждом старте применяются `model.default` / `model.provider` из `config/hermes.yaml` (с предупреждением в логе).
 
+### Общие скиллы (`skills/`)
+
+Каталог `skills/` в репозитории содержит скиллы, которые получают все пользователи: `yandex-disk` (WebDAV), `yandex-calendar`
+(CalDAV), `imap-mail-search` (почта по IMAP), `security-recon` (аудит своего хоста). Они запекаются в образ и **при каждом старте**
+копируются в `/opt/data/skills/`: каталог общего скилла заменяется целиком (обновление приезжает с пересборкой образа),
+скиллы пользователя с другими именами не затрагиваются. В `skills/` нельзя класть личные данные, логины и секреты: репозиторий публичный,
+тест `tests/test_shared_skills.py` это проверяет. Чтобы добавить скилл: создайте `skills/<имя>/SKILL.md` (поле `name` должно совпадать с именем каталога),
+выполните `docker compose up -d --build`.
+
 ### Экспорт настроек агента пользователя (скиллы и MCP)
+
+Полная пошаговая инструкция: [`docs/agent-export.md`](docs/agent-export.md).
 
 Скиллы, MCP-подключения (`mcp_servers` в `config.yaml`), память и сессии агента лежат только в томе `hermes-data`
 (`/opt/data`). Чтобы вынести то, что пользователь настроил, в свою ветку репозитория (память и сессии **не** выгружаются):
 
 ```bash
-git checkout <user>                                  # своя ветка
-scripts/export_agent.sh <user> [hermes-yandex]       # результат: agents/<user>/
+git checkout <user> && git merge origin/master       # своя ветка, свежий скрипт
+bash scripts/export_agent.sh <user> <container>      # результат: agents/<user>/
 git status agents/<user> && git diff                 # просмотреть глазами
-git add agents/<user> && git commit -m "Export agent <user>" && git push
+git add agents/<user> && git commit -m "Export agent <user>" && git push origin <user>
 ```
 
 В `agents/<user>/` попадают: `skills/` (только созданные или изменённые пользователем, поставляемые с Hermes пропускаются),
@@ -391,5 +402,6 @@ config/    hermes.yaml  hermes.local.yaml             # настройки Herme
 docker/    cont-init-yandex-messenger.sh  apply_config.py   # s6-шаг: плагин + применение сида через `hermes config set`
 scripts/   sync_client.py  install_wsl.sh  run_tests_wsl.sh  run_tests_docker.sh  probe_api.py
 tests/     test_inbound / test_outbound / test_interactive / test_transport / test_registration / test_discovery / test_seed_config  (+ conftest, fake_yandex)
-docs/      API_FINDINGS.md
+docs/      API_FINDINGS.md, agent-export.md
+skills/    общие скиллы агента (копируются в /opt/data/skills при старте)
 ```

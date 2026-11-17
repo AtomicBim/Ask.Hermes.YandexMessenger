@@ -22,6 +22,9 @@ COPY --chmod=a+rX,go-w plugins/platforms/yandex_messenger /opt/yandex-messenger-
 COPY --chmod=a+rX,go-w config/ /opt/yandex-messenger-plugin/config/
 COPY --chmod=a+rX,go-w docker/apply_config.py /opt/yandex-messenger-plugin/apply_config.py
 
+# Shared skills (repository skills/): copied into $HERMES_HOME/skills on every start by the cont-init script.
+COPY --chmod=a+rX,go-w skills/ /opt/yandex-messenger-plugin/skills/
+
 # Runs after the base image's own cont-init scripts (01-hermes-setup, 015-..., 02-reconcile-profiles).
 COPY --chmod=0755 docker/cont-init-yandex-messenger.sh /etc/cont-init.d/03-yandex-messenger
 
