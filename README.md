@@ -174,14 +174,16 @@ docker compose exec hermes grep "slash-command gating" /opt/data/logs/gateway.lo
 
 ### Экспорт настроек агента пользователя (скиллы и MCP)
 
+Полная пошаговая инструкция: [`docs/agent-export.md`](docs/agent-export.md).
+
 Скиллы, MCP-подключения (`mcp_servers` в `config.yaml`), память и сессии агента лежат только в томе `hermes-data`
 (`/opt/data`). Чтобы вынести то, что пользователь настроил, в свою ветку репозитория (память и сессии **не** выгружаются):
 
 ```bash
-git checkout <user>                                  # своя ветка
-scripts/export_agent.sh <user> [hermes-yandex]       # результат: agents/<user>/
+git checkout <user> && git merge origin/master       # своя ветка, свежий скрипт
+bash scripts/export_agent.sh <user> <container>      # результат: agents/<user>/
 git status agents/<user> && git diff                 # просмотреть глазами
-git add agents/<user> && git commit -m "Export agent <user>" && git push
+git add agents/<user> && git commit -m "Export agent <user>" && git push origin <user>
 ```
 
 В `agents/<user>/` попадают: `skills/` (только созданные или изменённые пользователем, поставляемые с Hermes пропускаются),
@@ -391,5 +393,5 @@ config/    hermes.yaml  hermes.local.yaml             # настройки Herme
 docker/    cont-init-yandex-messenger.sh  apply_config.py   # s6-шаг: плагин + применение сида через `hermes config set`
 scripts/   sync_client.py  install_wsl.sh  run_tests_wsl.sh  run_tests_docker.sh  probe_api.py
 tests/     test_inbound / test_outbound / test_interactive / test_transport / test_registration / test_discovery / test_seed_config  (+ conftest, fake_yandex)
-docs/      API_FINDINGS.md
+docs/      API_FINDINGS.md, agent-export.md
 ```
