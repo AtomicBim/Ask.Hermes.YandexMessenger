@@ -56,6 +56,24 @@ else
   log "no seed config found; skipping"
 fi
 
+# 3b. Shared skills from the repository (skills/ baked into the image). Each skill directory is replaced as a whole on
+#     every start, so a rebuilt image upgrades it; skills of the user (other directory names) are never touched.
+SKILLS_SRC=/opt/yandex-messenger-plugin/skills
+SKILLS_DEST="$HERMES_HOME/skills"
+if [ -d "$SKILLS_SRC" ]; then
+  mkdir -p "$SKILLS_DEST"
+  synced=0
+  for skill in "$SKILLS_SRC"/*/; do
+    [ -f "${skill}SKILL.md" ] || continue
+    name="$(basename "$skill")"
+    rm -rf "${SKILLS_DEST:?}/$name"
+    cp -a "${skill%/}" "$SKILLS_DEST/$name"
+    synced=$((synced + 1))
+  done
+  chown -R hermes:hermes "$SKILLS_DEST" 2>/dev/null || log "warning: could not chown $SKILLS_DEST"
+  log "shared skills synced: $synced (into $SKILLS_DEST)"
+fi
+
 # 4. The model is fixed by the deployment and re-applied on EVERY start, so nothing chosen at runtime
 #    (`hermes model`, `/config set`) survives a restart. The chat command /model is blocked by the plugin.
 #    Source of truth: HERMES_MODEL / HERMES_PROVIDER from .env; when unset, model.default / model.provider
