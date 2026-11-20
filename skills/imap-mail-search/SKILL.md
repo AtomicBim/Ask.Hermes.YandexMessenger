@@ -19,7 +19,7 @@ Prefer `himalaya` (or `google-workspace`) when that CLI/connector is already set
 
 ## Procedure
 
-1. **Resolve credentials.** IMAP host + port + login + password (or app password). Store the password in a `chmod 600` file; never put it in memory/inject-on-every-turn storage — record only the *path* there.
+1. **Resolve credentials.** IMAP host + port + login + password (or app password). Store them in `$HERMES_HOME/.secrets/yandex-mail.json` (`/opt/data/.secrets/yandex-mail.json` in the container; directory `chmod 700`, file `chmod 600`) as `{"login": ..., "app_password": ..., "host": "imap.yandex.ru", "port": 993}`. Keep exactly this file name: the chat bot checks for it to know whether Mail is connected. Never put the password in memory/inject-on-every-turn storage — record only the *path* there.
 2. **Connect and select.** `imaplib.IMAP4_SSL(host, port)` → `login(...)` → `select(folder)`. Always `BODY.PEEK[...]` to avoid marking mail read.
 3. **Locate messages.** Prefer a server-side `SEARCH`; fall back to a client-side header scan of all messages (chunked) when the server can't match the term.
 4. **Identify the sender.** Dedupe distinct `From` values (name + address) before reading bodies — one person often has multiple From encodings.

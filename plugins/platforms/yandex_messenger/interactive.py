@@ -1,11 +1,11 @@
 """Interactive prompts for the Yandex Messenger adapter (``InteractiveMixin``).
 
-A port of the Telegram adapter's button flows onto ``suggest_buttons``:
+Button flows (approvals, clarifying questions, slash confirmations, pickers) on ``suggest_buttons``:
 
 * every button carries ``server_action{name="hermes", payload={"cb": "<callback string>"}}``
   plus ``set_elements_state`` that disables the whole card while the bot works;
-* callback strings are 1:1 with Telegram (``ea:`` ``cl:`` ``sc:`` ``update_prompt:`` ``cp:``) so the
-  dispatcher logic is the same; the model picker is deliberately NOT ported (the model is set via .env);
+* callback strings use the gateway-wide prefixes (``ea:`` ``cl:`` ``sc:`` ``update_prompt:`` ``cp:``);
+  the model picker is deliberately NOT provided (the model is set via .env);
 * the Bot API has no ``answerCallbackQuery``: feedback is the card edit; refusals and expiries go
   to the tapping user as a private notice and never touch the shared card.
 """
@@ -77,11 +77,6 @@ _STRINGS = {
         "apply_error": "Could not apply selection: {error}",
         "no_choices": "No choices",
         "user_fallback": "user",
-        "onboarding_welcome": (
-            "Hi! I can work with your corporate Yandex Mail, Calendar and Disk. To connect them, write e.g. "
-            "\"connect mail\", \"connect calendar\" or \"connect disk\". You will need a Yandex app password; "
-            "I will tell you where to create it. This is optional: without it I work as usual."
-        ),
     },
     "ru": {
         "unauthorized": "⛔ У вас нет прав на это действие.",
@@ -121,11 +116,6 @@ _STRINGS = {
         "apply_error": "Не удалось применить выбор: {error}",
         "no_choices": "Нет вариантов",
         "user_fallback": "пользователь",
-        "onboarding_welcome": (
-            "Привет! Я могу работать с вашей корпоративной Яндекс Почтой, Календарём и Диском. Чтобы подключить, "
-            "напишите, например: «подключи почту», «подключи календарь» или «подключи диск». Понадобится пароль "
-            "приложения Яндекса, я подскажу, где его создать. Это необязательно: без подключения я работаю как обычно."
-        ),
     },
 }
 

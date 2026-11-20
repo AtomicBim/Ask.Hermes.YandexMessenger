@@ -117,6 +117,34 @@ def test_default_user_commands_are_all_real_and_safe(mod):
         assert command.name not in unsafe
 
 
+def _gateway_dispatched_commands() -> set:
+    """Canonical names the running gateway really handles (Hermes' own dispatcher tables)."""
+    import gateway.run_busy as run_busy
+    import gateway.run_inbound as run_inbound
+
+    names: set = set()
+    for module, attrs in ((run_busy, ("_PLAIN_COMMANDS", "_IDLE_COMMANDS")), (run_inbound, ("_HM_CANONICAL_COMMANDS",))):
+        for obj in vars(module).values():
+            for attr in attrs:
+                if isinstance(obj, type) and hasattr(obj, attr):
+                    names |= set(getattr(obj, attr))
+    return names
+
+
+def test_every_user_command_is_really_executed_by_the_gateway(mod):
+    """A command that is allowed but not handled by the gateway (e.g. CLI-only /history) would silently
+    do nothing in the chat: every default user command, /help and /whoami must be available AND dispatched."""
+    from hermes_cli.commands import _is_gateway_available, resolve_command
+
+    dispatched = _gateway_dispatched_commands()
+    assert dispatched, "could not read the gateway dispatcher tables (Hermes internals changed?)"
+    for name in (*mod.gateway_env.DEFAULT_USER_COMMANDS, "help", "whoami"):
+        command = resolve_command(name)
+        assert command is not None, f"/{name} is not a Hermes command"
+        assert _is_gateway_available(command), f"/{name} is CLI-only: it does nothing in the chat"
+        assert command.name in dispatched, f"/{name} is not handled by the gateway dispatcher"
+
+
 def test_user_commands_override(mod, monkeypatch):
     monkeypatch.setenv("YANDEX_MESSENGER_BOT_TOKEN", "t")
     monkeypatch.setenv("YANDEX_MESSENGER_ADMIN_USERS", "boss@corp.ru")

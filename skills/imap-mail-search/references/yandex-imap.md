@@ -12,7 +12,7 @@
   password does not work when two-factor authentication is on.
 - App passwords are service-scoped: a Disk or Calendar password returns an authentication error here, and a Mail password
   returns `401` against Disk and CalDAV.
-- Store the password in a `chmod 600` file; keep only the file path in memory, never the secret.
+- Store the access in `$HERMES_HOME/.secrets/yandex-mail.json` (`chmod 600`, directory `chmod 700`); keep only the file path in memory, never the secret.
 
 ## Folders
 - Folder names are IMAP modified UTF-7. List them with `M.list()` and match by the returned name instead of typing Cyrillic.
