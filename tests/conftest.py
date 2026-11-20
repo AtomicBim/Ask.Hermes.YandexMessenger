@@ -60,7 +60,8 @@ def mod(plugin):
         pass
 
     ns = Mods()
-    for name in ("adapter", "interactive", "transport", "settings", "standalone", "gateway_env", "adapter_hint"):
+    for name in ("adapter", "interactive", "transport", "settings", "standalone", "gateway_env", "adapter_hint",
+                 "onboarding"):
         setattr(ns, name, importlib.import_module(f"{PKG}.{name}"))
     ns.client = importlib.import_module(f"{PKG}._vendor.yandex_messenger_client")
     return ns
