@@ -37,6 +37,9 @@ Prefer `himalaya` (or `google-workspace`) when that CLI/connector is already set
 - **To find *everyone* sharing a name (relatives, colleagues), search all three address fields and union the ids.** `FROM`, `TO`, `CC` each catch a different slice — a person may appear only as an addressee. Parse each header with `email.utils.getaddresses`, decode display names, and group by lowercased address.
 - **Automated vendor emails are often a portal link, not an attached PDF.** "Счёт №… сформирован/оплачен" / "УПД №…" from SaaS/VDS/merchant billing systems usually carry only a link into the personal cabinet — the invoice PDF is absent. To recover the document, search the `Sent`/`Отправленные` folder for a forwarded copy to whoever signs it (the forward usually includes the real attachment). Extract attachments by walking the MIME tree for `part.get_filename()` plus `part.get_payload(decode=True)`, and decode the filename with `decode_header` — it is often MIME-encoded (`=?UTF-8?B?...?=`).
 
+- **Quoted bodies are full of HTML entities.** Yandex HTML mail stores `&nbsp;`, `&#8211;`, `&#43;`, `&laquo;`/`&raquo;` in the body, so a raw `BODY.PEEK[]` dump reads like markup. When writing bodies into a document, run `html.unescape(t)` and collapse whitespace (`re.sub(r'\s+',' ', t)`); if you kept the HTML, strip tags first with `re.sub(r'<[^>]+>',' ', t)`.
+- **Self-addressed ('note to self') mail appears in BOTH the Sent and INBOX folders.** To collect everything the user sent to their own address, `SEARCH` `FROM "<self>"` + `TO "<self>"` in each folder, then dedupe across folders by `Message-ID` (fall back to subject+date when that header is absent) or every note is counted twice. Fetch `RFC822.SIZE` alongside the headers and use it to pre-filter 'short notes' before pulling full bodies.
+
 ## References
 
 - `references/yandex-imap.md` — Yandex-specific access and quirks (app password, host, Cyrillic-search limitation, connection-drop threshold).
