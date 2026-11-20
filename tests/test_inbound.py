@@ -197,3 +197,75 @@ async def test_bot_request_does_not_become_a_message(make_adapter, make_update):
 
     await asyncio.sleep(0.01)
     assert seen == [{"cb": "mx"}] and a.events == []
+
+
+# ---------------------------------------------------------------- one-time onboarding
+@pytest.fixture
+def onboarding_env(monkeypatch, tmp_path):
+    """Isolated HERMES_HOME and a deterministic allowlist (alice is authorized, nobody else)."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("YANDEX_MESSENGER_ONBOARDING", raising=False)
+    monkeypatch.delenv("YANDEX_MESSENGER_ALLOW_ALL_USERS", raising=False)
+    monkeypatch.delenv("GATEWAY_ALLOW_ALL_USERS", raising=False)
+    monkeypatch.setenv("YANDEX_MESSENGER_ALLOWED_USERS", "alice")
+    return tmp_path / "home" / "yandex_messenger" / "onboarded"
+
+
+def _welcomes(fake):
+    return [r for r in fake.calls("messages/sendText") if "Яндекс" in r["json"]["text"] or "Yandex" in r["json"]["text"]]
+
+
+async def test_onboarding_first_private_message_greets_once_and_still_delivers(
+    make_adapter, make_update, fake, onboarding_env,
+):
+    a = make_adapter()
+    await a._dispatch_update(make_update("hello", message_id=1))
+    assert len(_welcomes(fake)) == 1
+    assert [e.text for e in a.events] == ["hello"]  # the original message still reaches Hermes
+    assert (onboarding_env / "alice").exists()
+    await a._dispatch_update(make_update("again", message_id=2))
+    assert len(_welcomes(fake)) == 1 and [e.text for e in a.events] == ["hello", "again"]
+
+
+async def test_onboarding_marker_survives_adapter_restart(make_adapter, make_update, fake, onboarding_env):
+    await make_adapter()._dispatch_update(make_update("one", message_id=1))
+    assert len(_welcomes(fake)) == 1
+    restarted = make_adapter()
+    await restarted._dispatch_update(make_update("two", message_id=2))
+    assert len(_welcomes(fake)) == 1
+
+
+async def test_onboarding_is_skipped_for_groups_commands_and_strangers(
+    make_adapter, make_update, fake, onboarding_env,
+):
+    a = make_adapter()
+    await a._dispatch_update(make_update("@hermes_bot hi", chat_type="group", chat_id="0/0/grp", message_id=1))
+    await a._dispatch_update(make_update("/help", message_id=2))
+    await a._dispatch_update(make_update("hi", login="mallory", message_id=3))
+    assert _welcomes(fake) == []
+    assert not onboarding_env.exists() or list(onboarding_env.iterdir()) == []
+
+
+async def test_onboarding_can_be_disabled(make_adapter, make_update, fake, onboarding_env, monkeypatch):
+    monkeypatch.setenv("YANDEX_MESSENGER_ONBOARDING", "false")
+    a = make_adapter()
+    await a._dispatch_update(make_update("hello"))
+    assert _welcomes(fake) == [] and len(a.events) == 1
+
+
+async def test_onboarding_marker_is_sanitized_and_send_failure_is_not_retried(
+    make_adapter, make_update, fake, onboarding_env, monkeypatch,
+):
+    monkeypatch.setenv("YANDEX_MESSENGER_ALLOWED_USERS", "Ev/il..Name")
+    a = make_adapter()
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("send failed")
+
+    a.send = boom
+    await a._dispatch_update(make_update("hi", login="Ev/il..Name", message_id=1))
+    assert [p.name for p in onboarding_env.iterdir()] == ["ev_il..name"]  # no path traversal, lower-cased
+    assert len(a.events) == 1  # a failing welcome never blocks the real message
+    a2 = make_adapter()
+    await a2._dispatch_update(make_update("hi", login="Ev/il..Name", message_id=2))
+    assert _welcomes(fake) == []  # marker was set before the failed send: no repeat

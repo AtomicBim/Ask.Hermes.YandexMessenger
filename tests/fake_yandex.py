@@ -20,9 +20,11 @@ class FakeYandex:
 
     async def _handle(self, request: web.Request):
         tail = request.match_info["tail"].strip("/")
-        record = {"method": request.method, "path": tail, "query": dict(request.query), "fields": []}
+        record = {"method": request.method, "path": tail, "query": dict(request.query), "fields": [],
+                  "dispositions": []}
         if request.content_type == "multipart/form-data":
             async for part in await request.multipart():
+                record["dispositions"].append(part.headers.get("Content-Disposition", ""))
                 record["fields"].append((part.name, part.filename, bytes(await part.read())))
         else:
             raw = await request.read()

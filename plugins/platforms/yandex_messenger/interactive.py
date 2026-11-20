@@ -77,6 +77,11 @@ _STRINGS = {
         "apply_error": "Could not apply selection: {error}",
         "no_choices": "No choices",
         "user_fallback": "user",
+        "onboarding_welcome": (
+            "Hi! I can work with your corporate Yandex Mail, Calendar and Disk. To connect them, write e.g. "
+            "\"connect mail\", \"connect calendar\" or \"connect disk\". You will need a Yandex app password; "
+            "I will tell you where to create it. This is optional: without it I work as usual."
+        ),
     },
     "ru": {
         "unauthorized": "⛔ У вас нет прав на это действие.",
@@ -116,6 +121,11 @@ _STRINGS = {
         "apply_error": "Не удалось применить выбор: {error}",
         "no_choices": "Нет вариантов",
         "user_fallback": "пользователь",
+        "onboarding_welcome": (
+            "Привет! Я могу работать с вашей корпоративной Яндекс Почтой, Календарём и Диском. Чтобы подключить, "
+            "напишите, например: «подключи почту», «подключи календарь» или «подключи диск». Понадобится пароль "
+            "приложения Яндекса, я подскажу, где его создать. Это необязательно: без подключения я работаю как обычно."
+        ),
     },
 }
 
@@ -264,13 +274,22 @@ class InteractiveMixin:
         return fn if callable(fn) else None
 
     def _is_tap_user_authorized(self, tap: Tap) -> bool:
-        """Who may press buttons: the injected runner check, the runner's own auth, then the env
-        allowlist; with nothing configured the answer is DENY (fail closed)."""
-        login = (tap.login or "").strip()
+        """Who may press buttons (see ``_login_authorized``)."""
+        return self._login_authorized(tap.login, tap.gateway_chat_type, tap.chat_id, tap.name)
+
+    def _login_authorized(
+        self, login: str, gateway_chat_type: str, chat_id: str, name: str = "",
+    ) -> bool:
+        """Is ``login`` an authorized user: the injected runner check, the runner's own auth, then the
+        env allowlist; with nothing configured the answer is DENY (fail closed).
+
+        ``gateway_chat_type`` is the Hermes vocabulary (``dm`` / ``group``), not Yandex' ``private``.
+        """
+        login = (login or "").strip()
         if not login:
             return False
         if getattr(self, "_authorization_check", None) is not None:
-            injected = self._is_sender_authorized(login, chat_type=tap.gateway_chat_type, chat_id=tap.chat_id)
+            injected = self._is_sender_authorized(login, chat_type=gateway_chat_type, chat_id=chat_id)
             if injected is not None:
                 return injected
         auth_fn = self._legacy_runner_auth_fn()
@@ -281,8 +300,8 @@ class InteractiveMixin:
                 from .gateway_env import platform as _platform
 
                 source = SessionSource(
-                    platform=_platform(), chat_id=tap.chat_id,
-                    chat_type=tap.gateway_chat_type, user_id=login, user_name=tap.name or None,
+                    platform=_platform(), chat_id=chat_id,
+                    chat_type=gateway_chat_type, user_id=login, user_name=name or None,
                 )
                 return bool(auth_fn(source))
             except Exception:

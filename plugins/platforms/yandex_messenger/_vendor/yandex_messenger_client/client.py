@@ -346,7 +346,9 @@ class YandexMessengerClient:
         """Return a factory producing a fresh ``FormData`` (a form cannot be re-sent on retry)."""
 
         def build() -> aiohttp.FormData:
-            form = aiohttp.FormData()
+            # quote_fields=False keeps non-ASCII filenames raw: Yandex shows the
+            # filename as-is and does not decode percent-encoding (%D0%9E...).
+            form = aiohttp.FormData(quote_fields=False)
             for key, value in fields.items():
                 form.add_field(key, str(value) if not isinstance(value, str) else value)
             for field, data, filename in files:

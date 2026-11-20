@@ -13,3 +13,5 @@ agents/**/auth*
 agents/**/memories/
 agents/**/sessions/
 agents/**/state*
+# monitoring output (scripts/monitor_agents.sh --md): private conversations
+monitor-out/
