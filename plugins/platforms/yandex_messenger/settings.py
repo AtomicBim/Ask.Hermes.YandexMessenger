@@ -64,6 +64,7 @@ class Settings:
     require_mention: bool = True
     allowed_chats: frozenset = field(default_factory=frozenset)
     edit_budget_secs: float = DEFAULT_EDIT_BUDGET_SECS
+    onboarding: bool = True
 
     @property
     def max_file_bytes(self) -> int:
@@ -145,4 +146,5 @@ def load_settings(config: Any = None) -> Settings:
         allowed_chats=as_csv_set(read("allowed_chats", "YANDEX_MESSENGER_ALLOWED_CHATS", "")),
         edit_budget_secs=as_float(extra.get("edit_budget_secs", DEFAULT_EDIT_BUDGET_SECS),
                                   DEFAULT_EDIT_BUDGET_SECS),
+        onboarding=as_bool(read("onboarding", "YANDEX_MESSENGER_ONBOARDING", True), True),
     )
