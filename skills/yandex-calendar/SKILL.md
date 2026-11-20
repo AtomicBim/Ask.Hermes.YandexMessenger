@@ -23,7 +23,7 @@ Operate a Yandex Calendar over CalDAV at `caldav.yandex.ru` with stdlib `urllib`
 
 ## Procedure
 
-1. **Credentials.** CalDAV login (the Yandex account) + an app password issued for **Календарь / CalDAV**. Store it in a `chmod 600` file; record only the path in memory.
+1. **Credentials.** CalDAV login (the Yandex account) + an app password issued for **Календарь / CalDAV**. Store it in `$HERMES_HOME/.secrets/yandex-calendar.json` (`/opt/data/.secrets/yandex-calendar.json` in the container; directory `chmod 700`, file `chmod 600`) as `{"login": ..., "app_password": ..., "caldav_url": "https://caldav.yandex.ru"}`. Keep exactly this file name: the chat bot checks for it to know whether Calendar is connected. Record only the path in memory.
 2. **Discover the calendar home** (two hops):
    - `PROPFIND Depth:0` on `https://caldav.yandex.ru/` → read `current-user-principal` (e.g. `/principals/users/<login>/`).
    - `PROPFIND Depth:1` on that principal URL → read `C:calendar-home-set` (e.g. `/calendars/<login>/`).

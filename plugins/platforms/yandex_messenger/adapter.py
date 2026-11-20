@@ -1,8 +1,8 @@
 """Yandex Messenger (Bot API) platform adapter for Hermes.
 
 Transport: ``getUpdates`` polling (default) or webhook (``YANDEX_MESSENGER_WEBHOOK_URL``).
-Parity with the Telegram adapter: streaming by edits, typing/status, media in/out, tappable
-approval / clarify / slash-confirm / pickers, reactions, group mention gating, cron delivery.
+Features: streaming by edits, typing/status, media in/out, tappable approval / clarify /
+slash-confirm / pickers, reactions, group mention gating, cron delivery.
 
 Addressing: every reply goes to ``chat.id`` (valid as ``chat_id`` for private chats too).
 Strings coming from outside (home channel, cron, send_message) are parsed by ``Target.parse``:
@@ -45,7 +45,7 @@ from ._vendor.yandex_messenger_client import (
     split_text,
     to_yandex_markdown,
 )
-from . import gateway_env
+from . import gateway_env, onboarding
 from .interactive import InteractiveMixin, configured_model, tr
 from .settings import Settings, load_settings, redact_proxy, resolve_proxy
 from .standalone import standalone_send
@@ -79,13 +79,18 @@ def _loop_time() -> float:
     return asyncio.get_running_loop().time()
 
 
-def _hermes_state_dir() -> Optional[Path]:
+def _hermes_home() -> Optional[Path]:
     try:
         from hermes_constants import get_hermes_home
 
-        return get_hermes_home() / "yandex_messenger"
+        return get_hermes_home()
     except Exception:
         return None
+
+
+def _hermes_state_dir() -> Optional[Path]:
+    home = _hermes_home()
+    return None if home is None else home / "yandex_messenger"
 
 
 class YandexMessengerAdapter(InteractiveMixin, BasePlatformAdapter):
@@ -479,37 +484,30 @@ class YandexMessengerAdapter(InteractiveMixin, BasePlatformAdapter):
             await self._maybe_onboard(chat_id, login, user_name)
         await self.handle_message(event)
 
-    @staticmethod
-    def _onboarding_marker(login: str) -> Optional[Path]:
-        """Per-login marker file in the persistent state dir; ``None`` when there is nowhere to write."""
-        state = _hermes_state_dir()
-        safe = re.sub(r"[^A-Za-z0-9._@-]", "_", (login or "").strip().lower()).lstrip(".")
-        if state is None or not safe:
-            return None
-        return state / "onboarded" / safe
-
     async def _maybe_onboard(self, chat_id: str, login: str, user_name: str = "") -> None:
-        """One-time welcome (mail / calendar / disk hint) for an authorized user's first private message.
+        """Offer to connect Mail / Calendar / Disk: first private message of a day, authorized users only,
+        while at least one of the three has no stored access (see ``onboarding.py``).
 
-        The marker is created BEFORE sending: a failed send must never lead to a repeated greeting.
+        The marker is written BEFORE sending: a failed send must never lead to a repeated greeting.
         The user's message is delivered to Hermes regardless; nothing here may raise.
         """
         try:
-            marker = self._onboarding_marker(login)
-            if marker is None or marker.exists():
+            home = _hermes_home()
+            marker = onboarding.marker_path(home, login)
+            if marker is None or not onboarding.due(marker):
                 return
             if not self._login_authorized(login, "dm", chat_id, user_name):
                 return
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                marker.touch(exist_ok=False)
-            except FileExistsError:
+            status = onboarding.connection_status(home)
+            if status.complete:
                 return
+            onboarding.claim(marker)
+            text = onboarding.welcome_text(status)
         except Exception:
             logger.debug("[%s] onboarding skipped for %s", self.name, login, exc_info=True)
             return
         with contextlib.suppress(Exception):
-            await self.send(chat_id, tr("onboarding_welcome"))
+            await self.send(chat_id, text)
 
     async def _reply_model_locked(self, chat_id: str, update: dict) -> None:
         """Answer ``/model`` with a refusal text; the command never reaches Hermes."""

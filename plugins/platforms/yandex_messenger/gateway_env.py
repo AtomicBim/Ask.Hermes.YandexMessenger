@@ -37,8 +37,10 @@ def _allowed_chats(config) -> None:
 # Slash commands a non-admin may run once admin gating is on (``/help`` and ``/whoami`` are always allowed).
 # Deliberately excluded: /model /config /reasoning /fast /personality /tools /skills /yolo /approvals /plugins
 # /reload* /restart /update /sethome /cron /login ... - everything that changes how the agent runs.
+# Every name must be dispatched by the gateway (a CLI-only command such as /history would be allowed but do
+# nothing in the chat); tests/test_registration.py checks this against Hermes' own dispatcher tables.
 DEFAULT_USER_COMMANDS = (
-    "new", "stop", "status", "retry", "undo", "history", "title", "resume", "sessions", "queue", "usage",
+    "new", "stop", "status", "retry", "undo", "title", "resume", "sessions", "queue", "usage",
     "approve", "deny", "version",
 )
 
