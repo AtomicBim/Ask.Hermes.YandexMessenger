@@ -27,6 +27,7 @@ Connect to and operate a Yandex Disk account over the WebDAV protocol (stdlib `u
 2. **Endpoint.** `https://webdav.yandex.ru/` — same for every account and folder; paths are appended below this root.
 3. **List a folder** with a `PROPFIND` request at `Depth: 1` and parse the `DAV:` multistatus. The `href` is percent-encoded; the human name (including Cyrillic) is in `displayname`.
 4. **Download** with `GET`, **upload** with `PUT`, both on the URL-encoded path.
+5. **Other verbs.** `MKCOL` creates a folder, `DELETE` removes, and `MOVE` renames/moves: `Destination: <BASE><encoded-dest>` header on a request to the encoded source (expect `201`/`204`). To move a whole folder tree, MOVE the folder itself — no recursive copy needed.
 
 ## Reusable snippet (stdlib only)
 
@@ -46,7 +47,7 @@ def list_dir(path):
     for r in root.findall('d:response', ns):
         href = r.findtext('d:href','',ns)
         name = urllib.parse.unquote(href.rstrip('/').rsplit('/',1)[-1])
-        if not name: continue                       # skip the self/root entry
+        if urllib.parse.unquote(href).strip('/') == path.strip('/'): continue   # skip the self entry (root or the queried folder)
         isdir = r.find('.//d:resourcetype/d:collection', ns) is not None
         size  = r.findtext('.//d:getcontentlength','',ns)
         print(('DIR ' if isdir else 'FILE'), name, size)
@@ -71,5 +72,9 @@ def upload(local, path):
 
 - **Yandex app passwords are service-scoped.** A password issued for Mail returns `401` against Disk WebDAV. Have the user create a separate one at id.yandex.ru/security/app-passwords choosing "Диск" / WebDAV.
 - **URL-encode every path segment** with `urllib.parse.quote` — Cyrillic folder/file names must be percent-encoded or the request 404s. Read names back from `displayname` (already decoded), not from the percent-encoded `href`.
-- **`Depth: 1` on the root returns the root itself as a child**; skip the empty/self `href` or you'll list the root as a fake entry.
+- **PROPFIND returns the requested collection itself as one of the responses.** The self `href` equals the path you queried (with a trailing slash). `if not name: continue` only filters the root case (`href='/'` → empty name); for a subfolder the self `href` is e.g. `/Reports/`, whose last segment is non-empty, so a naive recursive walker re-lists the same folder forever (Reports → Reports → Reports …). Skip the response whose decoded `href` (slashes stripped) equals the path you requested, not just empty names.
+- **Recursive PROPFIND scans hit HTTP 429 (rate limit).** Rapid `Depth: 1` probes across many folders get throttled. Target the folder you actually need by name, and add a ~1s sleep between requests when walking more than a handful of directories.
+- **Status codes.** `401` = bad/missing auth or wrong-service app password; `404` = wrong path (check encoding); `403`/`405` = WebDAV disabled for the corporate domain (only the org's IT can fix); `423` = resource LOCKED (open in an editor or held by a sync client) — blocks `MOVE` and `DELETE` but NOT `GET`, so ask the user to close the file, or copy (GET → PUT) and retry the delete later.
+- **Large files and batches.** WebDAV has no chat-size limit, so it is the right path for files over ~50 MB (chat drops those). Uploads can stall past a tool's default timeout even for a 1–2 MB file: earlier `PUT`s in a batch land, later ones silently don't. Upload one file at a time, re-list the target folder to confirm each landed, and retry a missing one with a higher timeout.
+- **Never put the password on a command line** (it would land in shell history/chat). With `curl`, use a `chmod 600` netrc file via `--netrc-file`; with Python, read the credentials from the `.secrets` JSON.
 - **Force IPv4 on intermittent `Network is unreachable`.** Yandex endpoints (webdav/caldav) resolve to IPv4 and IPv6; if `urllib` intermittently raises `OSError [Errno 101]`, fall back to `curl -4 …` (reliable for GET/PUT/PROPFIND) or resolve `AF_INET` first and connect to that address.

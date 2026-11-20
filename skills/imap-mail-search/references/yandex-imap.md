@@ -22,7 +22,8 @@
 ## Known limits
 - Server-side `SEARCH` with non-ASCII text may return nothing even when matches exist: verify with a control search on a
   Latin term that must match, then search the Latin transliteration or scan headers client-side.
-- The server closes the connection after roughly 1000 messages fetched in a loop: fetch in chunks of 100-200, reconnect on
+- The server closes the connection after roughly 1000 messages fetched in a loop, and after as few as ~30 when wide
+  multi-recipient headers are requested: fetch in chunks of 20-50 (wide headers) or 100-200 (`From` only), reconnect on
   `EOF`, and checkpoint the last processed id to a file.
 - `From` headers mix `=?utf-8?B?...?=` and `=?koi8-r?B?...?=`: decode with `email.header.decode_header` + `make_header`.
 - If the connection fails with `Network is unreachable` (IPv6), resolve an IPv4 address first or retry through `curl -4`.

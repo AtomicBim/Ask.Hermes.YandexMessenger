@@ -20,6 +20,7 @@ Operate a Yandex Calendar over CalDAV at `caldav.yandex.ru` with stdlib `urllib`
 - "Connect to my calendar", list calendars, or show upcoming events.
 - Find an event by title (or partial Cyrillic text) across calendars.
 - Create an event, or move/reschedule an existing one.
+- Create an event with attendees, or find a colleague's email in the address book to invite them (see `references/carddav-contacts.md`).
 
 ## Procedure
 
@@ -30,7 +31,8 @@ Operate a Yandex Calendar over CalDAV at `caldav.yandex.ru` with stdlib `urllib`
 3. **List calendars.** `PROPFIND Depth:1` on the calendar home. Each `d:response` whose `resourcetype` contains `C:calendar` is one calendar — read `displayname` (and `calendar-color` if present).
 4. **Fetch / search events.** A `GET` on a calendar collection returns a plain-text LIST of per-event `.ics` hrefs (one per line), NOT the events. Read them with one `REPORT` `C:calendar-multiget` carrying every href (single response, fast + robust), or `GET` each `.ics` individually.
 5. **Create.** `PUT` a `VCALENDAR`+`VEVENT` to `<calendar-home>/<slug>/<uuid>.ics` (fresh UUID filename). `201 Created` = success. Times as `TZID=Asia/Yekaterinburg` or UTC (`…Z`) — both display in the account's local time.
-6. **Move / edit.** `GET` the event `.ics`, change `DTSTART`/`DTEND` (keep the original duration on a "move"), bump `SEQUENCE` by 1, `PUT` back to the same URL.
+6. **Invite attendees.** Put `ORGANIZER;CN=…:mailto:<you>` and one `ATTENDEE;CN=…;RSVP=TRUE:mailto:<guest>` per invitee inside the `VEVENT` before `PUT`. Yandex stores each attendee as `PARTSTAT=NEEDS-ACTION` and sends the invitation email automatically. Find a colleague's address by name via the address book (`references/carddav-contacts.md`).
+7. **Move / edit.** `GET` the event `.ics`, change `DTSTART`/`DTEND` (keep the original duration on a "move"), bump `SEQUENCE` by 1, `PUT` back to the same URL. Note: the stored resource name may differ from the one you PUT (see Pitfalls) — GET the href from the collection listing, not the URL you created.
 
 ## Snippets
 
@@ -62,4 +64,10 @@ Multiget REPORT body (fetch N events in one call) — `POST` (method `REPORT`) t
 - **A bare `^DTSTART` regex matches the VTIMEZONE first.** Yandex events carry a large `VTIMEZONE` block whose `DTSTART:1916…` sentinel lines precede the event's own `DTSTART;TZID=…`. Scope extraction to `BEGIN:VEVENT…END:VEVENT` (or match `DTSTART;TZID=`), or you'll read a 1916/1919 sentinel as the event time.
 - **The collection GET returns hrefs, not events.** The `.ics` filenames are opaque UIDs, so search inside the fetched event data (`calendar-multiget`), never grep the href listing for a title.
 - **Escape DESCRIPTION text once, not twice.** `\,` and `\;` are the escapes. Building the field via `re.sub` with a raw-string replacement (`r'…\\,'`) silently inserts two backslashes and stores `\\,` — assemble the value as a plain string and let Yandex (re)escape the comma on save.
-- **Force IPv4 on intermittent `Network is unreachable`.** Yandex endpoints resolve to IPv4 and IPv6; if `urllib` intermittently raises `OSError [Errno 101]`, fall back to `curl -4 …` (reliable for GET/PUT/PROPFIND) or resolve `AF_INET` first and connect to that address.
+- **Force IPv4 on intermittent `Network is unreachable`.** Yandex endpoints resolve to IPv4 and IPv6; if `urllib` intermittently raises `OSError [Errno 101]`, fall back to `curl -4 …` (reliable for GET/PUT/PROPFIND) or resolve `AF_INET` first and connect to that address. When monkeypatching `socket.getaddrinfo` to force AF_INET, capture the real original first and patch only once per kernel — in a persistent `execute_code` session a later cell re-captures the already-patched function and recurses to `RecursionError`.
+- **Yandex renames the resource after the VEVENT `UID`, not the PUT filename.** A VEVENT whose `UID:<uuid>@hermes` is PUT to `<uuid>.ics` is stored as `<uuid>%40hermes.ics` (`@` URL-encoded): the PUT returns `201`, but a direct GET on the URL you PUT to then 404s. Confirm a create by `GET`-listing the collection and grep'ing for your UID, then GET that href — never assume the PUT URL is the stored URL.
+- **Contacts live on CardDAV, behind their own app password.** The principal's `addressbook-home-set` (e.g. `/addressbook/<login>/`) lists the user's address books (Yandex 360 exposes a "Personal" book and a corporate one). A **Календарь**-scoped password cannot read the cards, so to look up an invitee's email the user must issue a separate **Контакты / CardDAV** app password. CardDAV runs on `carddav.yandex.ru` (not `caldav`), and even with the right password `REPORT addressbook-query`/`addressbook-multiget` return `403 <supported-report/>` — only PROPFIND listing + per-card GET work. See `references/carddav-contacts.md` for the full lookup procedure.
+
+## References
+
+- `references/carddav-contacts.md` — look up a colleague's email in the Yandex address book (CardDAV) to invite them to an event.

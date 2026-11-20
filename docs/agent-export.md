@@ -83,20 +83,47 @@ git push origin <user>
 5. Скопировать `skills/` в образ (`Dockerfile`) и добавить в `docker/cont-init-yandex-messenger.sh` шаг, который при старте
    синхронизирует скиллы из образа в `$HERMES_HOME/skills/` (перезаписываются только скиллы из репозитория, пользовательские
    не трогаются), затем `chown hermes:hermes`.
-6. Ветки `agents/<user>/` в `master` **не переносить**. После слияния пересоздать ветки пользователей от нового `master`.
+6. Личные скиллы пользователей лежат в `master` в `agents/<user>/skills/` и **не должны повторять** общие: у каждого
+   скилла одна каноническая копия (общий: `skills/`, необязательный: `skills-optional/`, личный: `agents/<user>/skills/`).
+   Тест `test_users_do_not_keep_copies_of_shared_skills` падает, если в `agents/` оказалась копия общего скилла.
+   После слияния пересоздать ветки пользователей от нового `master`.
+
+### Повторная выгрузка и копии
+
+`export_agent.sh` выгружает все пользовательские скиллы, в том числе те, что уже стали общими и потому лежат в образе: при каждом
+старте они перезаписываются версией из репозитория. Если пользователь допишет в такой скилл свои заметки, они придут в
+`agents/<user>/skills/<имя>/` как копия. Администратор при сборке:
+1. сравнивает копию с `skills/<имя>/`, влитые различия переносит в общий скилл (без личных данных), копию **удаляет**;
+2. личные данные (логины, ФИО, адреса, номера писем и договоров) в общий скилл не переносит.
 
 ## Что уже перенесено в master
 
-Первая выгрузка трёх пользователей разобрана. В общий каталог `skills/` вошли `yandex-disk`, `yandex-calendar`, `imap-mail-search`
-(из `lebedev`) и `security-recon` (из `grigoriev`); они устанавливаются всем при старте контейнера. Личные скиллы остались
-в ветках пользователей: `russian-rail-tickets`, `real-estate-product-concept`, `yandex-disk-webdav`, `audio-transcription`.
-MCP-серверов ни у кого нет, подключения к Яндексу сделаны скиллами по WebDAV, CalDAV и IMAP.
+Первая выгрузка трёх пользователей и вторая выгрузка (aog, baranova, fathullin, grigoriev, lebedev, manchilina, osipov,
+paramonova, zhukova) разобраны.
+
+**Общие скиллы (`skills/`, ставятся всем при старте контейнера):**
+- `yandex-disk`: версия master + MOVE/423/429, защита от бесконечного обхода папок (manchilina, baranova);
+- `yandex-calendar`: версия master + приглашение участников, CardDAV-контакты, особенности UID (zhukova, grigoriev);
+- `imap-mail-search`: версия master + разбор вложенных HTML-сущностей, письма самому себе, обход обрывов соединения,
+  сверка исходящих и входящих (lebedev, paramonova);
+- `security-recon`: версия osipov (аудит прав и привилегий, Prometheus, скрипты `scripts/`);
+- `yandex-360-mcp`: MCP Яндекс 360, Телемост и Трекер (grigoriev, обезличен, ключи в `.secrets/`).
+
+**Необязательные скиллы (`skills-optional/`):** `digital-twin` ставится только там, где в `.env` задано
+`HERMES_OPTIONAL_SKILLS=digital-twin` (отдельный экземпляр, который создаёт аватары сотрудников).
+
+**Личные скиллы остаются в `agents/<user>/skills/`:** `baranova` (`audio-transcription`, `creative/raster-to-vector`,
+`real-estate/*`, `real-estate-product-concept`, `project-folder-structure`), `grigoriev` (`mcp-builder`,
+`russian-rail-tickets`), `osipov` (`research/malware-analysis`), `paramonova` (`productivity/grand-smeta`,
+`productivity/skany-processing`). У `aog`, `fathullin`, `lebedev`, `manchilina`, `zhukova` личных скиллов нет.
+
+MCP-серверов в выгрузках нет: подключения к Яндексу сделаны скиллами по WebDAV, CalDAV, IMAP и прямыми запросами к MCP.
 
 После обновления `master` каждому пользователю нужно пересоздать свою ветку от него и пересобрать контейнер:
 ```bash
 git fetch origin && git checkout <user> && git reset --hard origin/master   # личные скиллы лежат в истории ветки; сначала сохраните agents/<user>/, если он нужен
 docker compose up -d --build
-docker compose logs --tail=40 hermes | grep "shared skills"                  # shared skills synced: 4
+docker compose logs --tail=40 hermes | grep -E "shared skills|optional skills"  # shared skills synced: 5 / optional skills enabled: 0
 ```
 
 ## Модель агента

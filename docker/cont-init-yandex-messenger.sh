@@ -74,6 +74,36 @@ if [ -d "$SKILLS_SRC" ]; then
   log "shared skills synced: $synced (into $SKILLS_DEST)"
 fi
 
+# 3c. Optional skills (skills-optional/ baked into the image): installed ONLY on instances that list them in
+#     HERMES_OPTIONAL_SKILLS (comma-separated names, e.g. "digital-twin"). A repository skill that is not listed is
+#     removed again, so dropping a name from .env takes the skill away on the next start.
+OPT_SRC=/opt/yandex-messenger-plugin/skills-optional
+if [ -d "$OPT_SRC" ]; then
+  mkdir -p "$SKILLS_DEST"
+  wanted=",$(printf '%s' "${HERMES_OPTIONAL_SKILLS:-}" | tr -d ' \r'),"
+  opt_on=0
+  opt_off=0
+  for skill in "$OPT_SRC"/*/; do
+    [ -f "${skill}SKILL.md" ] || continue
+    name="$(basename "$skill")"
+    case "$wanted" in
+      *",$name,"*)
+        rm -rf "${SKILLS_DEST:?}/$name"
+        cp -a "${skill%/}" "$SKILLS_DEST/$name"
+        opt_on=$((opt_on + 1))
+        ;;
+      *)
+        if [ -d "$SKILLS_DEST/$name" ]; then
+          rm -rf "${SKILLS_DEST:?}/$name"
+          opt_off=$((opt_off + 1))
+        fi
+        ;;
+    esac
+  done
+  chown -R hermes:hermes "$SKILLS_DEST" 2>/dev/null || log "warning: could not chown $SKILLS_DEST"
+  log "optional skills enabled: $opt_on, removed (not enabled here): $opt_off"
+fi
+
 # 4. The model is fixed by the deployment and re-applied on EVERY start, so nothing chosen at runtime
 #    (`hermes model`, `/config set`) survives a restart. The chat command /model is blocked by the plugin.
 #    Source of truth: HERMES_MODEL / HERMES_PROVIDER from .env; when unset, model.default / model.provider

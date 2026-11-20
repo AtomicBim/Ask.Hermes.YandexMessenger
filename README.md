@@ -175,11 +175,25 @@ docker compose exec hermes grep "slash-command gating" /opt/data/logs/gateway.lo
 ### Общие скиллы (`skills/`)
 
 Каталог `skills/` в репозитории содержит скиллы, которые получают все пользователи: `yandex-disk` (WebDAV), `yandex-calendar`
-(CalDAV), `imap-mail-search` (почта по IMAP), `security-recon` (аудит своего хоста). Они запекаются в образ и **при каждом старте**
+(CalDAV + адресная книга CardDAV), `imap-mail-search` (почта по IMAP), `yandex-360-mcp` (MCP Яндекс 360: Телемост, Трекер),
+`security-recon` (аудит своего хоста). Они запекаются в образ и **при каждом старте**
 копируются в `/opt/data/skills/`: каталог общего скилла заменяется целиком (обновление приезжает с пересборкой образа),
 скиллы пользователя с другими именами не затрагиваются. В `skills/` нельзя класть личные данные, логины и секреты: репозиторий публичный,
 тест `tests/test_shared_skills.py` это проверяет. Чтобы добавить скилл: создайте `skills/<имя>/SKILL.md` (поле `name` должно совпадать с именем каталога),
 выполните `docker compose up -d --build`.
+
+### Необязательные скиллы (`skills-optional/`)
+
+Скиллы из `skills-optional/` **не ставятся по умолчанию**. Они запекаются в образ, но копируются в `/opt/data/skills/` только
+на экземпляре, где их имена перечислены в `.env` в `HERMES_OPTIONAL_SKILLS` (через запятую). Скилл, которого нет в списке,
+при следующем старте удаляется. Сейчас там один скилл:
+
+* `digital-twin`: создание аватара сотрудника (интейк → подключение источников → сбор данных → сборка персоны → развёртывание
+  → удаление). Вызывается только явным запросом. Данные берёт через `imap-mail-search`, `yandex-calendar`, `yandex-disk` и
+  `yandex-360-mcp`; **Телемост обязателен** (без него сбор не начинается). Включается на отдельном экземпляре:
+  `HERMES_OPTIONAL_SKILLS=digital-twin`. На обычных агентах переменная пустая.
+
+Правила те же, что для `skills/` (никаких личных данных и секретов); тест `tests/test_shared_skills.py` проверяет оба каталога.
 
 **Онбординг.** На первое **личное** сообщение авторизованного пользователя за день плагин (без участия LLM) присылает
 приветствие **на русском** с предложением подключить Почту, Календарь и Диск. Оно показывает только то, что ещё не подключено
@@ -437,4 +451,6 @@ scripts/   sync_client.py  install_wsl.sh  run_tests_wsl.sh  run_tests_docker.sh
 tests/     test_inbound / test_outbound / test_interactive / test_transport / test_registration / test_discovery / test_seed_config  (+ conftest, fake_yandex)
 docs/      API_FINDINGS.md, agent-export.md
 skills/    общие скиллы агента (копируются в /opt/data/skills при старте)
+skills-optional/  необязательные скиллы (ставятся только по HERMES_OPTIONAL_SKILLS), сейчас digital-twin
+agents/<user>/skills/  личные скиллы пользователей (без копий общих; общее живёт только в skills/)
 ```
