@@ -23,7 +23,7 @@ Connect to and operate a Yandex Disk account over the WebDAV protocol (stdlib `u
 
 ## Procedure
 
-1. **Resolve credentials.** WebDAV login (the Yandex account, e.g. `user@domain`) + an app password issued for **Disk / WebDAV** — a Mail app password will not work (see Pitfalls). Store it in a `chmod 600` file; record only the path in memory, never the secret.
+1. **Resolve credentials.** WebDAV login (the Yandex account, e.g. `user@domain`) + an app password issued for **Disk / WebDAV** — a Mail app password will not work (see Pitfalls). Store it in `$HERMES_HOME/.secrets/yandex-disk.json` (`/opt/data/.secrets/yandex-disk.json` in the container; create the directory with `chmod 700`, the file with `chmod 600`) as `{"login": ..., "app_password": ..., "webdav_url": "https://webdav.yandex.ru"}`. Keep exactly this file name: the chat bot checks for it to know whether Disk is connected. Record only the path in memory, never the secret.
 2. **Endpoint.** `https://webdav.yandex.ru/` — same for every account and folder; paths are appended below this root.
 3. **List a folder** with a `PROPFIND` request at `Depth: 1` and parse the `DAV:` multistatus. The `href` is percent-encoded; the human name (including Cyrillic) is in `displayname`.
 4. **Download** with `GET`, **upload** with `PUT`, both on the URL-encoded path.
