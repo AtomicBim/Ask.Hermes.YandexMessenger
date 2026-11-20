@@ -475,7 +475,41 @@ class YandexMessengerAdapter(InteractiveMixin, BasePlatformAdapter):
             event.reply_to_author_id = str(author.get("login") or author.get("id") or "") or None
             event.reply_to_author_name = str(author.get("display_name") or author.get("login") or "") or None
             event.reply_to_is_own_message = self._replied_to_bot(update)
+        if chat_type == "private" and not text.startswith("/") and self._settings.onboarding:
+            await self._maybe_onboard(chat_id, login, user_name)
         await self.handle_message(event)
+
+    @staticmethod
+    def _onboarding_marker(login: str) -> Optional[Path]:
+        """Per-login marker file in the persistent state dir; ``None`` when there is nowhere to write."""
+        state = _hermes_state_dir()
+        safe = re.sub(r"[^A-Za-z0-9._@-]", "_", (login or "").strip().lower()).lstrip(".")
+        if state is None or not safe:
+            return None
+        return state / "onboarded" / safe
+
+    async def _maybe_onboard(self, chat_id: str, login: str, user_name: str = "") -> None:
+        """One-time welcome (mail / calendar / disk hint) for an authorized user's first private message.
+
+        The marker is created BEFORE sending: a failed send must never lead to a repeated greeting.
+        The user's message is delivered to Hermes regardless; nothing here may raise.
+        """
+        try:
+            marker = self._onboarding_marker(login)
+            if marker is None or marker.exists():
+                return
+            if not self._login_authorized(login, "dm", chat_id, user_name):
+                return
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                marker.touch(exist_ok=False)
+            except FileExistsError:
+                return
+        except Exception:
+            logger.debug("[%s] onboarding skipped for %s", self.name, login, exc_info=True)
+            return
+        with contextlib.suppress(Exception):
+            await self.send(chat_id, tr("onboarding_welcome"))
 
     async def _reply_model_locked(self, chat_id: str, update: dict) -> None:
         """Answer ``/model`` with a refusal text; the command never reaches Hermes."""

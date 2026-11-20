@@ -237,6 +237,23 @@ async def test_send_document_and_caption(make_adapter, fake, tmp_path):
     assert not missing.success and "not found" in missing.error
 
 
+async def test_cyrillic_filename_is_sent_raw_not_percent_encoded(make_adapter, fake, tmp_path):
+    a = make_adapter()
+    name = "Опера_реестр_19.11.2026.xlsx"
+    f = tmp_path / "x.xlsx"
+    f.write_bytes(b"PK")
+    assert (await a.send_document("0/0/dm-1", str(f), file_name=name)).success
+    rec = fake.last("messages/sendFile")
+    assert rec["fields"][-1][1] == name
+    assert "%D0" not in rec["dispositions"][-1] and name in rec["dispositions"][-1]
+    renamed = tmp_path / "Скриншот_экрана.png"
+    renamed.write_bytes(b"\x89PNG")
+    assert (await a.send_image_file("0/0/dm-1", str(renamed))).success
+    rec = fake.last("messages/sendImage")
+    assert rec["fields"][-1][1] == "Скриншот_экрана.png"
+    assert "%D0" not in rec["dispositions"][-1]
+
+
 async def test_cache_prefix_is_stripped_from_sent_filename(make_adapter, fake, tmp_path, mod):
     a = make_adapter()
     cached = tmp_path / "doc_4eb5d4bed2bd_.env.example"
