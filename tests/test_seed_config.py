@@ -38,6 +38,7 @@ def test_repo_seed_is_valid_and_has_no_credentials(apply_config):
         files.append(overlay)
     leaves = dict(apply_config.flatten(apply_config.load(files)))
     assert leaves["model.provider"] == "openrouter" and leaves["stt.enabled"] is True
+    assert leaves["display.language"] == "ru"  # Russian users: command descriptions, /help, approvals
     assert leaves["tts.gemini.model"] and leaves["auxiliary.vision.model"] and leaves["image_gen.model"]
     # the repository is public: no credentials may live in the seed files
     assert not any(any(s in k.lower() for s in ("key", "token", "secret", "password")) for k in leaves)

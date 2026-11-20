@@ -10,7 +10,9 @@ EXPECTED = {"yandex-disk", "yandex-calendar", "imap-mail-search", "security-reco
 # personal data / secret shapes (the same families the export script guards against, plus corporate identifiers)
 FORBIDDEN = re.compile(
     r"y0_[A-Za-z0-9_-]{8,}|AQAAA[A-Za-z0-9_-]{8,}|(?:Bearer|OAuth)\s+(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{16,}"
-    r"|[A-Za-z0-9._%+-]+@(?!domain\b|example\b)[A-Za-z0-9-]+\.(?:ru|com|org|net)\b|atomsk|atomstroy|/opt/data/\.secrets",
+    r"|[A-Za-z0-9._%+-]+@(?!domain\b|example\b)[A-Za-z0-9-]+\.(?:ru|com|org|net)\b|atomsk|atomstroy"
+    # only the agreed credential files of the three connectors may be named; anything else under .secrets is personal
+    r"|\.secrets/(?!yandex-(?:mail|calendar|disk)\.json\b)",
     re.IGNORECASE,
 )
 
@@ -50,6 +52,24 @@ def test_skill_references_exist(skill):
     text = (skill / "SKILL.md").read_text(encoding="utf-8")
     for ref in re.findall(r"`(references/[\w./-]+)`", text):
         assert (skill / ref).is_file(), f"{skill.name}: missing {ref}"
+
+
+def test_connector_skills_use_the_file_names_the_onboarding_checks(mod):
+    """The welcome message decides 'connected' by the access file name: skill and plugin must agree."""
+    expected = {"imap-mail-search": "yandex-mail.json", "yandex-calendar": "yandex-calendar.json",
+                "yandex-disk": "yandex-disk.json"}
+    for skill, filename in expected.items():
+        text = (SKILLS / skill / "SKILL.md").read_text(encoding="utf-8")
+        assert f".secrets/{filename}" in text, f"{skill} must tell the agent to store access in .secrets/{filename}"
+    from pathlib import Path as _P
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home = _P(tmp)
+        (home / ".secrets").mkdir()
+        for filename in expected.values():
+            (home / ".secrets" / filename).write_text("{}x", encoding="utf-8")
+        assert mod.onboarding.connection_status(home).complete
 
 
 def test_image_and_init_script_ship_the_skills():

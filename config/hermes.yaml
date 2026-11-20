@@ -14,6 +14,9 @@ model:
   default: "~deepseek/deepseek-pro-latest"
   provider: "openrouter"
 
+display:
+  language: "ru"     # slash-command descriptions, /help, /status, approvals and other replies in Russian
+
 delegation:          # model for sub-agents
   model: deepseek/deepseek-v4.1-flash-1017
   provider: openrouter
